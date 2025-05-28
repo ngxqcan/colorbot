@@ -1,5 +1,8 @@
 # 2PC Valorant Colorbot
 
+> ### Looking for a more advanced, efficient, and user freindly colorbot?
+> Check out the updated project: [**AIMEX**](https://github.com/Violevo/aimex) – Built in c++ with a web-UI for configuration
+
 ## Fully External & Undetectable 2-Computer Colorbot for Valorant
 
 This project creates an external **colorbot** for **Valorant** that uses a two-computer setup to detect enemy players and trigger mouse movements and clicks, using NDI to transfer video frames between computers. By analysing frames captured by OBS and processing them on a second computer, this simulates mouse movement and clicks in response to the game’s environment, using a Raspberry Pi Pico to interface with the mouse on a hardware level, making it **completely** undetectable to **any** anticheat (tested undetected for VGK).
