@@ -1,0 +1,8 @@
+keyboard
+customtkinter
+makcu
+opencv-python
+numpy
+Pillow
+cyndilib
+cmake

@@ -1,0 +1,41 @@
+# Node.js
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+venv/
+env/
+.venv/
+ENV/
+.ENV/
+
+
+# C/C++
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.dSYM/
+
+# .NET
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.mdb
+
+# Visual Studio
+.vscode/
+.vs/
