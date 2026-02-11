@@ -117,7 +117,7 @@ Contributions are always welcome. If you'd like to contribute to this project, p
 
 - Redevelop in C++ for improved performance
 - Add humanised aim (Bezier curves) + Smoothing + Randomness
-- Add more features (Recoil, Instalock, etc)
+- Extend feature list (Recoil, Instalock, etc)
 
 ### Credits
 
