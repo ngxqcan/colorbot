@@ -410,7 +410,7 @@ class App(customtkinter.CTk):
         # Row 2: Mouse Driver
         customtkinter.CTkLabel(self.misc_frame, text="Mouse Driver (1-PC):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=10, sticky="w")
         self.combobox_mouse = customtkinter.CTkComboBox(
-            self.misc_frame, values=["Auto", "Win32", "Makcu"], 
+            self.misc_frame, values=["Auto", "Logitech", "Makcu", "Win32"], 
             width=140, font=customtkinter.CTkFont(size=13)
         )
         self.combobox_mouse.grid(row=2, column=1, padx=10, pady=10, sticky="w")

@@ -87,7 +87,7 @@ python main.py
 
 ### Driver Settings (Settings tab):
 - **Capture Driver**: `Auto` (detects fastest DXCam/MSS), `DXCam`, `MSS`, `GDI`, `NDI`.
-- **Mouse Driver**: `Auto`, `Win32` (1-PC Direct API), `Makcu` (Hardware device).
+- **Mouse Driver**: `Auto`, `Logitech` (Logitech G HUB / LGS signed kernel driver), `Makcu` (Hardware device), `Win32` (Direct API).
 
 ---
 
@@ -103,7 +103,8 @@ python main.py
     ├── core/
     │   └── colorbot.py # Detection, math scaling, aim loop & preview data
     ├── drivers/
-    │   ├── mouse.py    # 1-PC Win32 API & Makcu hardware driver
+    │   ├── logitech.py # Logitech G HUB / LGS signed driver wrapper
+    │   ├── mouse.py    # Unified mouse driver (Logitech, Makcu, Win32)
     │   └── screen.py   # DXCam, MSS, GDI & NDI multi-driver capture
     ├── ui/
     │   └── app.py      # CustomTkinter UI with Live Preview & HUD controls

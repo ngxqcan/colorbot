@@ -2,6 +2,7 @@ import sys
 import os
 import ctypes
 import time
+from drivers.logitech import LogitechDriver
 
 # Win32 Mouse Event Flags
 MOUSEEVENTF_MOVE = 0x0001
@@ -15,19 +16,22 @@ MOUSEEVENTF_MIDDLEUP = 0x0040
 class PicoMouse:
     """
     Unified Mouse Driver supporting:
-    1. 'win32' - Direct Windows API (mouse_event / ctypes) for 1-PC single setup.
-    2. 'makcu' - Makcu / Pico USB hardware device for 2-PC or hardware-spoofed 1-PC setup.
-    3. 'auto'  - Tries Makcu first; falls back to win32 gracefully.
+    1. 'logitech' - Logitech G HUB / LGS signed driver (1-PC kernel mouse emulation, bypasses Vanguard user-mode blocks).
+    2. 'makcu'    - Makcu / Pico USB hardware device for 2-PC or hardware-spoofed 1-PC setup.
+    3. 'win32'    - Direct Windows API (mouse_event / ctypes) for standard desktop apps.
+    4. 'auto'     - Tries Makcu first -> Logitech second -> falls back to Win32.
     """
     def __init__(self, method="auto"):
         self.method = method.lower() if method else "auto"
         self.makcu_controller = None
+        self.logitech_driver = None
         self.active_driver = "win32"
         self.is_windows = sys.platform == "win32"
 
         self._init_driver()
 
     def _init_driver(self):
+        # 1. Try Makcu Hardware Device
         if self.method in ("makcu", "auto"):
             try:
                 from makcu import create_controller
@@ -40,13 +44,27 @@ class PicoMouse:
                     return
             except Exception as e:
                 if self.method == "makcu":
-                    print(f"[Warning] Makcu connection failed: {e}. Falling back to Win32 API.")
+                    print(f"[Warning] Makcu connection failed: {e}. Falling back...")
                 self.makcu_controller = None
 
-        # Fallback to direct Windows API
+        # 2. Try Logitech G HUB / LGS Driver
+        if self.method in ("logitech", "ghub", "lgs", "auto"):
+            try:
+                self.logitech_driver = LogitechDriver()
+                if self.logitech_driver.is_connected():
+                    self.active_driver = "logitech"
+                    print("[Mouse] Logitech G HUB driver initialized successfully.")
+                    return
+                elif self.method in ("logitech", "ghub", "lgs"):
+                    print("[Warning] Logitech driver requested but ghub_device.dll / driver not found.")
+            except Exception as e:
+                print(f"[Warning] Logitech driver init error: {e}")
+                self.logitech_driver = None
+
+        # 3. Fallback to direct Windows API
         if self.is_windows:
             self.active_driver = "win32"
-            print("[Mouse] Using 1-PC Direct Windows API (ctypes mouse_event).")
+            print("[Mouse] Using 1-PC Direct Windows API (ctypes mouse_event). Note: blocked by Valorant Vanguard in-game.")
         else:
             self.active_driver = "stub"
             print("[Mouse] Non-Windows platform detected; using safe stub driver.")
@@ -57,14 +75,24 @@ class PicoMouse:
         if dx == 0 and dy == 0:
             return
 
+        # Makcu hardware
         if self.active_driver == "makcu" and self.makcu_controller:
             try:
                 self.makcu_controller.move(dx, dy)
                 return
             except Exception as e:
-                print(f"[Error] Makcu move failed ({e}); switching to Win32 API.")
+                print(f"[Error] Makcu move failed ({e}); switching to fallback.")
                 self.active_driver = "win32"
 
+        # Logitech G HUB driver
+        if self.active_driver == "logitech" and self.logitech_driver:
+            if self.logitech_driver.move(dx, dy):
+                return
+            else:
+                print("[Error] Logitech move failed; switching to win32 fallback.")
+                self.active_driver = "win32"
+
+        # Win32 user32.mouse_event
         if self.active_driver == "win32" and self.is_windows:
             try:
                 ctypes.windll.user32.mouse_event(MOUSEEVENTF_MOVE, dx, dy, 0, 0)
@@ -73,6 +101,7 @@ class PicoMouse:
 
     def click(self, button="left", delay=0.01):
         """Simulates a mouse click with a realistic press-release duration."""
+        # Makcu hardware
         if self.active_driver == "makcu" and self.makcu_controller:
             try:
                 from makcu import MouseButton
@@ -80,9 +109,18 @@ class PicoMouse:
                 self.makcu_controller.click(btn)
                 return
             except Exception as e:
-                print(f"[Error] Makcu click failed ({e}); switching to Win32 API.")
+                print(f"[Error] Makcu click failed ({e}); switching to fallback.")
                 self.active_driver = "win32"
 
+        # Logitech G HUB driver
+        if self.active_driver == "logitech" and self.logitech_driver:
+            if self.logitech_driver.click(button, delay):
+                return
+            else:
+                print("[Error] Logitech click failed; switching to win32 fallback.")
+                self.active_driver = "win32"
+
+        # Win32 user32.mouse_event
         if self.active_driver == "win32" and self.is_windows:
             try:
                 if button == "left":
@@ -107,5 +145,13 @@ class PicoMouse:
                 pass
             self.makcu_controller = None
 
+        if self.logitech_driver:
+            try:
+                self.logitech_driver.close()
+            except Exception:
+                pass
+            self.logitech_driver = None
+
     def __del__(self):
         self.close()
+
