@@ -95,6 +95,12 @@ class Colorbot:
         self.locked_target_pos = None
         self.locked_target_time = 0.0
 
+        # Moving Shoot: Velocity Tracking & Target Lead Predictor
+        self.target_vel_x = 0.0
+        self.target_vel_y = 0.0
+        self.last_target_time = 0.0
+        self.last_raw_target = None
+
         # Spray / Burst & Recoil Compensation States
         self.is_burst_spraying = False
         self.burst_spray_start_time = 0.0
@@ -244,8 +250,9 @@ class Colorbot:
     def _calculate_target_point(self, x, y, w, h, gz_center, active_bone_setting):
         """
         Calculates exact bone points (Head, Neck, Shoulder, Body) inside the character model,
-        and applies the Anti-Shake EMA stabilization filter.
+        and applies dynamic velocity lead prediction & continuous sigmoid stabilization for Moving Shoot.
         """
+        now = time.time()
         center_x = x + w // 2
         
         # 1. Head Bone
@@ -295,19 +302,39 @@ class Colorbot:
             raw_cX, raw_target_y = head_pt
             active_name = "Head"
 
+        # Moving Shoot: Dynamic Velocity & Motion Lead Calculation
+        lead_x = 0.0
+        lead_y = 0.0
+        if self.last_raw_target is not None and self.last_target_time > 0:
+            dt = max(0.001, min(0.08, now - self.last_target_time))
+            raw_vx = (raw_cX - self.last_raw_target[0]) / dt
+            raw_vy = (raw_target_y - self.last_raw_target[1]) / dt
+            
+            # Smooth velocity EMA filter
+            self.target_vel_x = 0.60 * self.target_vel_x + 0.40 * raw_vx
+            self.target_vel_y = 0.60 * self.target_vel_y + 0.40 * raw_vy
+            
+            # Predictive lead compensation for frame/capture latency (~16ms)
+            lead_x = self.target_vel_x * 0.016
+            lead_y = self.target_vel_y * 0.016
+
+        self.last_raw_target = (raw_cX, raw_target_y)
+        self.last_target_time = now
+
+        target_with_lead_x = raw_cX + lead_x
+        target_with_lead_y = raw_target_y + lead_y
+
         # Continuous Sigmoid Anti-Shake filter (prevents micro-jitter and motion stutter)
         if self.anti_shake_enabled and self.last_filtered_target is not None:
             prev_x, prev_y = self.last_filtered_target
-            delta_dist = np.hypot(raw_cX - prev_x, raw_target_y - prev_y)
+            delta_dist = np.hypot(target_with_lead_x - prev_x, target_with_lead_y - prev_y)
             # Continuous Sigmoidal blending (rock-solid when still, zero-lag tracking when running)
-            # Micro-jitter (< 3px): alpha ~ 0.22 (smooth and stable)
-            # Fast motion / running (> 10px): alpha ~ 0.85 - 1.0 (instant lock)
             alpha = 0.22 + 0.78 / (1.0 + np.exp(-(delta_dist - 5.5) / 2.0))
-            filtered_x = prev_x * (1.0 - alpha) + float(raw_cX) * alpha
-            filtered_y = prev_y * (1.0 - alpha) + float(raw_target_y) * alpha
+            filtered_x = prev_x * (1.0 - alpha) + float(target_with_lead_x) * alpha
+            filtered_y = prev_y * (1.0 - alpha) + float(target_with_lead_y) * alpha
         else:
-            filtered_x = float(raw_cX)
-            filtered_y = float(raw_target_y)
+            filtered_x = float(target_with_lead_x)
+            filtered_y = float(target_with_lead_y)
 
         self.last_filtered_target = (filtered_x, filtered_y)
         cX = int(round(filtered_x))
@@ -316,10 +343,10 @@ class Colorbot:
 
     def _calculate_aim_step(self, x_diff, y_diff, dist, smooth_val):
         """
-        Ultimate Pro Aim Calculation:
+        Ultimate Pro Aim Calculation for Moving Shoot:
         - Exact Valorant Sens to Pixel Ratio: 1.07437623 * (Sens ^ -0.9936827126).
         - Soft Hermite Deadzone: Smooth ease-in, zero shaking and zero boundary stutter.
-        - Adaptive Velocity Clamping: Prevents overshooting and deflection during run & gun.
+        - Dynamic Velocity Clamping with Motion Feedforward.
         """
         if dist <= 0.4:
             return 0.0, 0.0
@@ -349,8 +376,9 @@ class Colorbot:
         step_x = target_move_x * adaptive_smooth * dz_mult
         step_y = target_move_y * adaptive_smooth * dz_mult
 
-        # Adaptive Velocity Clamping per tick (prevents overshooting when running)
-        max_vel = max(2.5, dist * 0.42 * (smooth + 0.40))
+        # Dynamic Velocity Clamping per tick (allows fast tracking when player is moving shoot)
+        target_speed = np.hypot(self.target_vel_x, self.target_vel_y)
+        max_vel = max(2.8, (dist * 0.42 + target_speed * 0.02) * (smooth + 0.40))
         step_len = np.hypot(step_x, step_y)
         if step_len > max_vel:
             scale = max_vel / step_len
@@ -407,21 +435,29 @@ class Colorbot:
             active_bone_req = self.magnet_target if magnet_is_active else self.aim_target
             cX, target_y, bones_dict, active_bone_name = self._calculate_target_point(x, y, w, h, gz_center, active_bone_req)
             
-            # Dynamic Recoil Compensation (RCS) during active spray:
-            # Smoothly shifts the aim target bone downward along the torso (Head -> Neck -> Upper Chest)
+            # Moving Shoot: Recoil Curve during Burst / Spray
+            # In Valorant:
+            # Bullet 1 (0ms - 90ms): Exact First-Bullet Accuracy -> Pinpoint on Head/Neck
+            # Bullet 2 (90ms - 180ms): Recoil climbs slightly -> Pull down smoothly by rcs_pitch * 0.75
+            # Bullet 3 (180ms - 270ms): Recoil reaches burst peak -> Pull down smoothly by rcs_pitch * 1.6
+            # Bullet 4+ (Continuous Spray): Lock onto upper chest with sinusoidal yaw stabilization
             if self.rcs_enabled and self.is_burst_spraying:
                 spray_elapsed_ms = (now - self.burst_spray_start_time) * 1000.0
                 if spray_elapsed_ms >= self.rcs_start_delay_ms:
                     spray_t = (spray_elapsed_ms - self.rcs_start_delay_ms) / 1000.0
                     
-                    # Progressive vertical pull-down bounded within the target torso height
-                    max_rcs_offset = min(int(h * 0.38), int(self.rcs_pitch * 4.0))
-                    recoil_pull_y = min(max_rcs_offset, self.rcs_pitch * min(4.0, spray_t * 6.5))
+                    # Sigmoidal smooth progressive pull-down
+                    burst_duration = max(0.15, self.burst_count * self.burst_delay)
+                    burst_progress = min(1.0, spray_t / burst_duration)
+                    recoil_scale = burst_progress * burst_progress * (3.0 - 2.0 * burst_progress)
+                    
+                    max_recoil_offset = min(int(h * 0.38), int(self.rcs_pitch * 3.8))
+                    recoil_pull_y = recoil_scale * max_recoil_offset
                     target_y += int(round(recoil_pull_y))
 
-                    # Smooth sinusoidal horizontal sway (zero jarring binary toggle)
+                    # Subtle horizontal counter-sway for moving recoil stability
                     if self.rcs_yaw > 0.01:
-                        yaw_sway = math.sin(spray_t * 10.0) * self.rcs_yaw * min(1.0, spray_t * 2.0)
+                        yaw_sway = math.sin(spray_t * 12.0) * self.rcs_yaw * min(1.0, spray_t * 2.5)
                         cX += int(round(yaw_sway))
 
             x_diff = cX - gz_center
@@ -479,9 +515,9 @@ class Colorbot:
                     self.mouse.move(dx, dy)
                     aiming_this_tick = True
 
-            # 4. Magnet Firing Execution (Burst = Hold Spray, Tap = Single Shot)
-            hitbox_w = max(4, w // 2)
-            hitbox_h = max(5, int(h * 0.35))
+            # 4. Magnet Firing Execution with Dynamic Velocity-Aware Hitbox Window
+            hitbox_w = max(5, int(w * 0.42) + int(abs(self.target_vel_x) * 0.015))
+            hitbox_h = max(6, int(h * 0.35))
             is_on_target = (abs(cX - gz_center) <= hitbox_w and abs(target_y - gz_center) <= hitbox_h)
 
             if magnet_is_active:
