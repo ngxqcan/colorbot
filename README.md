@@ -6,25 +6,23 @@ A high-performance colorbot for Valorant optimized for **1-PC standalone setups*
 
 ## ⚡ Key Features & Optimizations
 
-- **Magnet Mode with Tap & Burst Firing**:
-  - `Tap`: Single precise bullet per trigger lock (ideal for Vandal/Sheriff/Guardian).
-  - `Burst (2-Shot / 3-Shot)`: Fires a tight controlled burst with humanized shot cadence.
-  - `Continuous`: Smooth tracking with full auto spray.
+- **Dedicated 🧲 Magnet Tab**:
+  - Independent Magnet Master Enable, Keybind, and Target Bone selector.
+  - **Customizable Firing Controls**:
+    - **Burst Bullets Input Box & Slider**: Adjust number of bullets per burst (e.g. 1 to 6).
+    - **Bullet Interval Delay (ms) Input & Slider**: Fine-tune shot cadence (40ms - 200ms).
+    - **Recovery Cooldown (ms) Input & Slider**: Control pause between taps/bursts (80ms - 500ms).
+  - 1-Click Weapon Presets: `[ 🎯 Vandal Tap ]`, `[ 💥 Phantom 2-Burst ]`, `[ ⚡ 3-Burst ]`.
+- **Center-of-Head Targeting**:
+  - Silhouette Bridging & Morphological Closing connects disconnected outline segments into a unified enemy character box.
+  - Automatically aligns crosshair directly with the center of the skull / nose / eye level inside the character rather than the colored outline boundary.
+- **Anti-Jitter Exponential Smoothing**:
+  - Target coordinate low-pass EMA filter eliminates pixel jitter caused by game aliasing.
+  - Smooth ease-in deceleration near target + sub-pixel float accumulator.
 - **Large High-Definition Live Preview**:
-  - Large **360x360 HD Canvas** (scalable to 400x400, 320x320, or 256x256).
-  - **Live FOV Visualization**: Adjusting the FOV slider immediately expands/contracts the live yellow FOV ring and updates capture bounds in real-time.
-  - Interactive FOV slider directly on the Preview toolbar.
-- **Target Bone Selection (Head / Neck / Body / Auto)**:
-  - Configure target location to **Head**, **Neck**, **Body / Chest**, or **Auto** (dynamic closest bone).
-- **Anti-Jitter Humanized Aim Smoothing**:
-  - Sub-pixel delta accumulator and velocity clamping to prevent violent snapping, micro-jitter, and overshooting.
-- **1-Click Legit & Magnet Presets**:
-  - `[ 🎯 Legit ]`: FOV: 45, Smoothing: 0.18, Head Target (ultra-natural human assist).
-  - `[ 🧲 Mag Tap ]`: FOV: 45, Smoothing: 0.20, Head Target + Tap Fire.
-  - `[ 💥 Mag Burst ]`: FOV: 45, Smoothing: 0.20, Head Target + 2-Shot Burst.
-  - `[ ⚡ Rage ]`: FOV: 85, Smoothing: 0.45, Snap tracking.
-- **Multi-Driver Screen Capture (DXCam / MSS / Win32 GDI / NDI)**:
-  - 144Hz–240Hz+ sub-millisecond screen capture (<0.5ms latency) centered on crosshair ROI.
+  - Large **360x360 HD Canvas** (scalable to 400x400, 320x320, 256x256).
+  - **Live FOV Ring**: Dynamic yellow circle shows exact FOV bounds in real time.
+  - Quick FOV slider directly on Preview toolbar.
 - **Multi-Driver Mouse Emulation (Logitech G HUB / Makcu / Win32)**:
   - Kernel-level mouse emulation via Logitech G HUB driver / Makcu USB device to bypass user-mode synthetic input filtering.
 
@@ -59,27 +57,33 @@ python main.py
 
 ## ⚙️ Configuration Guide
 
-### Aimbot Settings:
-- **Aimbot Master Enable**: Main switch to activate the Aimbot engine.
-- **Preset Buttons**: `🎯 Legit`, `🧲 Mag Tap`, `💥 Mag Burst`, `⚡ Rage` for instant tuning.
-- **Aim Key**: Key to hold or press for aim assist (e.g. `RMB`, `Mouse4`, `Mouse5`, `Alt`, `Shift`, `C`).
-- **Aim Mode**:
-  - `Hold`: Smooth tracking while Aim Key is held down.
-  - `Magnet`: Smooth tracking + automatic firing (Tap or Burst).
-  - `Toggle`: Pressing Aim Key toggles active tracking.
-  - `Always`: Continuously tracks enemies inside FOV.
-- **Magnet Fire**: `Tap`, `Burst (2-Shot)`, `Burst (3-Shot)`, `Continuous`.
+### 1. 🎯 Aimbot Tab:
+- **Aimbot Master Enable**: Main switch for standard aim assist.
+- **Aim Key**: Key to hold or toggle (`RMB`, `Mouse4`, `Mouse5`, `Alt`, etc.).
+- **Aim Mode**: `Hold`, `Toggle`, `Always`.
 - **Target Bone**: `Head`, `Neck`, `Body`, `Auto`.
-- **FOV**: Bounding box size centered on crosshair (40–60 px recommended for legit play).
-- **Game Sensitivity**: Match your exact in-game Valorant sensitivity (e.g. `0.35`).
-- **Smoothing Factor**: Factor from 0.05 (ultra-smooth/humanized) to 1.0 (instant snap). Default `0.18` for legit.
+- **Enemy Color**: `Purple` (Default), `Yellow`, `Red`.
+- **FOV, Sensitivity, Smoothing, Head Offset**: Fully adjustable with sliders.
 
-### Live Preview Tab:
-- **Stream Live**: Toggle real-time HD preview canvas ON/OFF.
+### 2. 🧲 Magnet Bot Tab (Dedicated):
+- **Magnet Master Enable**: Activates Magnet auto-aim + auto-fire.
+- **Magnet Key**: Independent keybind for Magnet mode.
+- **Firing Mode**: `Tap`, `Burst`, `Continuous`.
+- **Burst Bullets**: Direct number entry or slider (1–6 bullets).
+- **Bullet Interval Delay (ms)**: Direct number entry or slider.
+- **Shot Cooldown (ms)**: Direct number entry or slider.
+- **Magnet FOV & Smoothing**: Dedicated sliders for Magnet mode.
+
+### 3. ⚡ Triggerbot Tab:
+- **Triggerbot Master Enable**: Main switch.
+- **Trigger Key & Mode**: `Toggle`, `Hold`, `Always`.
+- **Shot Delay (ms)**: Milliseconds before firing when crosshair is over enemy.
+
+### 4. 👁️ Live Preview Tab:
+- **Stream Live**: Real-time HD canvas feed.
 - **View Mode**: `Camera + HUD`, `HSV Color Mask`, `Split View`.
-- **Canvas Size**: `360x360` (Default), `400x400`, `320x320`, `256x256`.
-- **Live FOV Slider**: Drag to see FOV box and yellow circle expand/shrink live.
-- **Popout Window**: Standalone resizable floating HUD window.
+- **Size**: `360x360`, `400x400`, `320x320`, `256x256`.
+- **Live FOV Slider & Popout Window**.
 
 ---
 
