@@ -1,4 +1,5 @@
 import sys
+import math
 import threading
 import time
 import cv2
@@ -294,35 +295,41 @@ class Colorbot:
             raw_cX, raw_target_y = head_pt
             active_name = "Head"
 
-        # Anti-Shake coordinate stabilization filter (prevents detection micro-jitter)
+        # Continuous Sigmoid Anti-Shake filter (prevents micro-jitter and motion stutter)
         if self.anti_shake_enabled and self.last_filtered_target is not None:
             prev_x, prev_y = self.last_filtered_target
             delta_dist = np.hypot(raw_cX - prev_x, raw_target_y - prev_y)
-            if delta_dist < 2.5:
-                cX = int(0.75 * prev_x + 0.25 * raw_cX)
-                target_y = int(0.75 * prev_y + 0.25 * raw_target_y)
-            elif delta_dist < 8.0:
-                cX = int(0.45 * prev_x + 0.55 * raw_cX)
-                target_y = int(0.45 * prev_y + 0.55 * raw_target_y)
-            else:
-                cX = raw_cX
-                target_y = raw_target_y
+            # Continuous Sigmoidal blending (rock-solid when still, zero-lag tracking when running)
+            # Micro-jitter (< 3px): alpha ~ 0.22 (smooth and stable)
+            # Fast motion / running (> 10px): alpha ~ 0.85 - 1.0 (instant lock)
+            alpha = 0.22 + 0.78 / (1.0 + np.exp(-(delta_dist - 5.5) / 2.0))
+            filtered_x = prev_x * (1.0 - alpha) + float(raw_cX) * alpha
+            filtered_y = prev_y * (1.0 - alpha) + float(raw_target_y) * alpha
         else:
-            cX = raw_cX
-            target_y = raw_target_y
+            filtered_x = float(raw_cX)
+            filtered_y = float(raw_target_y)
 
-        self.last_filtered_target = (cX, target_y)
+        self.last_filtered_target = (filtered_x, filtered_y)
+        cX = int(round(filtered_x))
+        target_y = int(round(filtered_y))
         return cX, target_y, bones_dict, active_name
 
     def _calculate_aim_step(self, x_diff, y_diff, dist, smooth_val):
         """
         Ultimate Pro Aim Calculation:
         - Exact Valorant Sens to Pixel Ratio: 1.07437623 * (Sens ^ -0.9936827126).
-        - Adaptive Sigmoid Velocity Profile: Smooth acceleration & ease-out deceleration.
-        - Micro-Deadzone: Zero shaking when crosshair is within target zone.
+        - Soft Hermite Deadzone: Smooth ease-in, zero shaking and zero boundary stutter.
+        - Adaptive Velocity Clamping: Prevents overshooting and deflection during run & gun.
         """
-        if dist <= max(0.5, self.deadzone):
+        if dist <= 0.4:
             return 0.0, 0.0
+
+        # Soft Deadzone curve: smooth ease-in from 0 to 1 without hard cutoffs
+        if dist < self.deadzone:
+            t = dist / max(0.5, self.deadzone)
+            dz_mult = t * t * (3.0 - 2.0 * t)
+        else:
+            dz_mult = 1.0
 
         sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
         target_move_x = x_diff * sens_scale
@@ -331,19 +338,19 @@ class Colorbot:
         smooth = max(0.02, min(1.0, smooth_val))
 
         # Adaptive Distance Multiplier:
-        if dist < 6.0:
-            ease = max(0.18, (dist / 6.0) ** 1.25)
+        if dist < 5.0:
+            ease = max(0.20, (dist / 5.0) ** 1.20)
             adaptive_smooth = smooth * ease
-        elif dist < 25.0:
-            adaptive_smooth = smooth * 1.05
+        elif dist < 22.0:
+            adaptive_smooth = smooth * 1.0
         else:
-            adaptive_smooth = min(1.0, smooth * 1.20)
+            adaptive_smooth = min(1.0, smooth * 1.15)
 
-        step_x = target_move_x * adaptive_smooth
-        step_y = target_move_y * adaptive_smooth
+        step_x = target_move_x * adaptive_smooth * dz_mult
+        step_y = target_move_y * adaptive_smooth * dz_mult
 
-        # Adaptive Velocity Clamping per tick
-        max_vel = max(2.5, dist * 0.38 * (smooth + 0.45))
+        # Adaptive Velocity Clamping per tick (prevents overshooting when running)
+        max_vel = max(2.5, dist * 0.42 * (smooth + 0.40))
         step_len = np.hypot(step_x, step_y)
         if step_len > max_vel:
             scale = max_vel / step_len
@@ -385,9 +392,11 @@ class Colorbot:
         # Check Active Trigger/Aim/Magnet states
         magnet_is_active = self.magnet_enabled and self.is_magnet_key_pressed
         
-        # Reset lock when keys are released
+        # Reset lock and accumulator when keys are released
         if not (self.is_aim_key_pressed or self.is_magnet_key_pressed or self.is_trigger_key_pressed):
             self.locked_target_pos = None
+            self.acc_x = 0.0
+            self.acc_y = 0.0
             if self.is_burst_spraying:
                 self.mouse.mouse_up("left")
                 self.is_burst_spraying = False
@@ -398,19 +407,25 @@ class Colorbot:
             active_bone_req = self.magnet_target if magnet_is_active else self.aim_target
             cX, target_y, bones_dict, active_bone_name = self._calculate_target_point(x, y, w, h, gz_center, active_bone_req)
             
-            x_diff = cX - gz_center
-            y_diff = target_y - gz_center
-
             # Dynamic Recoil Compensation (RCS) during active spray:
+            # Smoothly shifts the aim target bone downward along the torso (Head -> Neck -> Upper Chest)
             if self.rcs_enabled and self.is_burst_spraying:
                 spray_elapsed_ms = (now - self.burst_spray_start_time) * 1000.0
                 if spray_elapsed_ms >= self.rcs_start_delay_ms:
-                    bullet_num = int((spray_elapsed_ms - self.rcs_start_delay_ms) / 100.0) + 1
-                    recoil_pull = min(self.rcs_pitch * 1.8, self.rcs_pitch * (1.0 + 0.15 * min(bullet_num, 8)))
-                    yaw_pull = self.rcs_yaw * (0.5 if bullet_num % 2 == 0 else -0.5)
-                    y_diff += int(round(recoil_pull))
-                    x_diff += int(round(yaw_pull))
+                    spray_t = (spray_elapsed_ms - self.rcs_start_delay_ms) / 1000.0
+                    
+                    # Progressive vertical pull-down bounded within the target torso height
+                    max_rcs_offset = min(int(h * 0.38), int(self.rcs_pitch * 4.0))
+                    recoil_pull_y = min(max_rcs_offset, self.rcs_pitch * min(4.0, spray_t * 6.5))
+                    target_y += int(round(recoil_pull_y))
 
+                    # Smooth sinusoidal horizontal sway (zero jarring binary toggle)
+                    if self.rcs_yaw > 0.01:
+                        yaw_sway = math.sin(spray_t * 10.0) * self.rcs_yaw * min(1.0, spray_t * 2.0)
+                        cX += int(round(yaw_sway))
+
+            x_diff = cX - gz_center
+            y_diff = target_y - gz_center
             dist = np.hypot(x_diff, y_diff)
 
             target_info = {
@@ -452,8 +467,8 @@ class Colorbot:
             if should_aim and is_new_frame:
                 step_x, step_y = self._calculate_aim_step(x_diff, y_diff, dist, aim_smooth_val)
                 
-                self.acc_x += step_x
-                self.acc_y += step_y
+                self.acc_x = max(-2.0, min(2.0, self.acc_x + step_x))
+                self.acc_y = max(-2.0, min(2.0, self.acc_y + step_y))
                 
                 dx = int(round(self.acc_x))
                 dy = int(round(self.acc_y))
