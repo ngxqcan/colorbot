@@ -16,13 +16,14 @@ class ScreenCapture:
     def __init__(self, x=0, y=0, grabzone=100, method="auto"):
         self.x = int(x)
         self.y = int(y)
-        self.grabzone = int(grabzone)
+        # Ensure grabzone is strictly an even integer (DXCam requirement)
+        self.grabzone = max(10, (int(grabzone) // 2) * 2)
         self.method = method.lower() if method else "auto"
         
         self.screen = np.zeros((self.grabzone, self.grabzone, 3), dtype=np.uint8)
         self.lock = threading.Lock()
         self.running = True
-        self.active_driver = None
+        self.active_driver = "none"
         
         # Performance metrics
         self.frame_count = 0
@@ -104,7 +105,7 @@ class ScreenCapture:
         with self.lock:
             self.x = int(x)
             self.y = int(y)
-            self.grabzone = int(grabzone)
+            self.grabzone = max(10, (int(grabzone) // 2) * 2)
             region = (self.x, self.y, self.x + self.grabzone, self.y + self.grabzone)
 
             if self.active_driver == "dxcam" and self.dxcam_camera:
@@ -126,7 +127,10 @@ class ScreenCapture:
             frame = None
 
             if self.active_driver == "dxcam" and self.dxcam_camera:
-                frame = self.dxcam_camera.get_latest_frame()
+                try:
+                    frame = self.dxcam_camera.get_latest_frame()
+                except Exception:
+                    frame = None
 
             elif self.active_driver == "mss" and self.mss_instance:
                 try:
@@ -135,22 +139,24 @@ class ScreenCapture:
                     monitor["width"] = self.grabzone
                     monitor["height"] = self.grabzone
                     sct_img = self.mss_instance.grab(monitor)
-                    frame = np.frombuffer(sct_img.raw, dtype=np.uint8).reshape((self.grabzone, self.grabzone, 4))[:, :, :3]
+                    frame = np.frombuffer(sct_img.raw, dtype=np.uint8).reshape((sct_img.height, sct_img.width, 4))[:, :, :3]
                 except Exception:
-                    pass
+                    frame = None
 
             elif self.active_driver == "gdi":
                 frame = self._grab_win32_gdi()
 
             elif self.active_driver == "ndi" and self.ndi_recv:
-                ndi_frame = self.ndi_recv.get_video_frame()
-                if ndi_frame is not None:
-                    # Crop ROI from full NDI frame
-                    full_img = np.array(ndi_frame.data)[:, :, :3]
-                    h, w, _ = full_img.shape
-                    y1 = max(0, min(self.y, h - self.grabzone))
-                    x1 = max(0, min(self.x, w - self.grabzone))
-                    frame = full_img[y1:y1 + self.grabzone, x1:x1 + self.grabzone]
+                try:
+                    ndi_frame = self.ndi_recv.get_video_frame()
+                    if ndi_frame is not None:
+                        full_img = np.array(ndi_frame.data)[:, :, :3]
+                        h, w, _ = full_img.shape
+                        y1 = max(0, min(self.y, h - self.grabzone))
+                        x1 = max(0, min(self.x, w - self.grabzone))
+                        frame = full_img[y1:y1 + self.grabzone, x1:x1 + self.grabzone]
+                except Exception:
+                    frame = None
 
             if frame is not None:
                 with self.lock:
@@ -163,62 +169,62 @@ class ScreenCapture:
         """Captures ROI using native Windows GDI (BitBlt) via ctypes."""
         if sys.platform != "win32":
             return None
-        import ctypes
-        from ctypes import wintypes
+        try:
+            import ctypes
+            from ctypes import wintypes
 
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
 
-        hwnd = 0
-        h_src_dc = user32.GetDC(hwnd)
-        h_mem_dc = gdi32.CreateCompatibleDC(h_src_dc)
-        h_bitmap = gdi32.CreateCompatibleBitmap(h_src_dc, self.grabzone, self.grabzone)
-        h_old_bitmap = gdi32.SelectObject(h_mem_dc, h_bitmap)
+            hwnd = 0
+            h_src_dc = user32.GetDC(hwnd)
+            h_mem_dc = gdi32.CreateCompatibleDC(h_src_dc)
+            h_bitmap = gdi32.CreateCompatibleBitmap(h_src_dc, self.grabzone, self.grabzone)
+            h_old_bitmap = gdi32.SelectObject(h_mem_dc, h_bitmap)
 
-        # BitBlt from screen to memory DC
-        SRCCOPY = 0x00CC0020
-        gdi32.BitBlt(h_mem_dc, 0, 0, self.grabzone, self.grabzone, h_src_dc, self.x, self.y, SRCCOPY)
+            SRCCOPY = 0x00CC0020
+            gdi32.BitBlt(h_mem_dc, 0, 0, self.grabzone, self.grabzone, h_src_dc, self.x, self.y, SRCCOPY)
 
-        # Extract bitmap bytes
-        class BITMAPINFOHEADER(ctypes.Structure):
-            _fields_ = [
-                ('biSize', wintypes.DWORD),
-                ('biWidth', wintypes.LONG),
-                ('biHeight', wintypes.LONG),
-                ('biPlanes', wintypes.WORD),
-                ('biBitCount', wintypes.WORD),
-                ('biCompression', wintypes.DWORD),
-                ('biSizeImage', wintypes.DWORD),
-                ('biXPelsPerMeter', wintypes.LONG),
-                ('biYPelsPerMeter', wintypes.LONG),
-                ('biClrUsed', wintypes.DWORD),
-                ('biClrImportant', wintypes.DWORD)
-            ]
+            class BITMAPINFOHEADER(ctypes.Structure):
+                _fields_ = [
+                    ('biSize', wintypes.DWORD),
+                    ('biWidth', wintypes.LONG),
+                    ('biHeight', wintypes.LONG),
+                    ('biPlanes', wintypes.WORD),
+                    ('biBitCount', wintypes.WORD),
+                    ('biCompression', wintypes.DWORD),
+                    ('biSizeImage', wintypes.DWORD),
+                    ('biXPelsPerMeter', wintypes.LONG),
+                    ('biYPelsPerMeter', wintypes.LONG),
+                    ('biClrUsed', wintypes.DWORD),
+                    ('biClrImportant', wintypes.DWORD)
+                ]
 
-        class BITMAPINFO(ctypes.Structure):
-            _fields_ = [('bmiHeader', BITMAPINFOHEADER), ('bmiColors', wintypes.DWORD * 3)]
+            class BITMAPINFO(ctypes.Structure):
+                _fields_ = [('bmiHeader', BITMAPINFOHEADER), ('bmiColors', wintypes.DWORD * 3)]
 
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = self.grabzone
-        bmi.bmiHeader.biHeight = -self.grabzone  # Top-down DIB
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = 0
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = self.grabzone
+            bmi.bmiHeader.biHeight = -self.grabzone  # Top-down DIB
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0
 
-        buffer_size = self.grabzone * self.grabzone * 4
-        buf = (ctypes.c_char * buffer_size)()
+            buffer_size = self.grabzone * self.grabzone * 4
+            buf = (ctypes.c_char * buffer_size)()
 
-        gdi32.GetDIBits(h_mem_dc, h_bitmap, 0, self.grabzone, ctypes.byref(buf), ctypes.byref(bmi), 0)
+            gdi32.GetDIBits(h_mem_dc, h_bitmap, 0, self.grabzone, ctypes.byref(buf), ctypes.byref(bmi), 0)
 
-        # Clean up GDI objects
-        gdi32.SelectObject(h_mem_dc, h_old_bitmap)
-        gdi32.DeleteObject(h_bitmap)
-        gdi32.DeleteDC(h_mem_dc)
-        user32.ReleaseDC(hwnd, h_src_dc)
+            gdi32.SelectObject(h_mem_dc, h_old_bitmap)
+            gdi32.DeleteObject(h_bitmap)
+            gdi32.DeleteDC(h_mem_dc)
+            user32.ReleaseDC(hwnd, h_src_dc)
 
-        img_arr = np.frombuffer(buf, dtype=np.uint8).reshape((self.grabzone, self.grabzone, 4))
-        return img_arr[:, :, :3]
+            img_arr = np.frombuffer(buf, dtype=np.uint8).reshape((self.grabzone, self.grabzone, 4))
+            return img_arr[:, :, :3]
+        except Exception:
+            return None
 
     def _update_fps(self):
         self.frame_count += 1

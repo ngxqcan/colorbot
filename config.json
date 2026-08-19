@@ -1,7 +1,11 @@
 {
-    "TOGGLE_KEY": "f1",
+    "MASTER_TOGGLE_KEY": "f1",
+    "AIM_KEY": "RMB",
     "AIM_MODE": "Hold",
+    "AIM_ENABLED": false,
     "TRIGGER_KEY": "f2",
+    "TRIGGER_MODE": "Toggle",
+    "TRIGGER_ENABLED": false,
     "TRIGGER_DELAY": 25,
     "FOV": 60,
     "RESOLUTION": [
@@ -13,5 +17,7 @@
     "SMOOTHING": 0.3,
     "HEAD_OFFSET": 8,
     "CAPTURE_METHOD": "Auto",
-    "MOUSE_METHOD": "Auto"
+    "MOUSE_METHOD": "Auto",
+    "PREVIEW_MODE": "Overlay",
+    "PREVIEW_ZOOM": "2x"
 }

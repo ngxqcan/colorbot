@@ -12,20 +12,25 @@ VK_MAPPING = {
     "lmb": 0x01,
     "left_click": 0x01,
     "left click": 0x01,
+    "left": 0x01,
     "rmb": 0x02,
     "right_click": 0x02,
     "right click": 0x02,
+    "right": 0x02,
     "mmb": 0x04,
     "middle_click": 0x04,
     "middle click": 0x04,
+    "middle": 0x04,
     "mouse4": 0x05,
     "mouse 4": 0x05,
     "xbutton1": 0x05,
     "side1": 0x05,
+    "thumb1": 0x05,
     "mouse5": 0x06,
     "mouse 5": 0x06,
     "xbutton2": 0x06,
     "side2": 0x06,
+    "thumb2": 0x06,
     
     # Modifier keys
     "shift": 0x10,
@@ -42,6 +47,10 @@ VK_MAPPING = {
     "space": 0x20,
     "spacebar": 0x20,
     "tab": 0x09,
+    "esc": 0x1B,
+    "escape": 0x1B,
+    "enter": 0x0D,
+    "backspace": 0x08,
     
     # Function keys
     "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73,
@@ -62,25 +71,31 @@ def is_key_pressed(key_name):
     """
     Checks whether the specified keyboard key or mouse button is currently held down.
     Supports:
-      - Mouse: 'RMB', 'LMB', 'MMB', 'Mouse4', 'Mouse5', 'right_click', etc.
-      - Keyboard: 'shift', 'alt', 'ctrl', 'f1', 'c', 'v', 'space', etc.
+      - Mouse: 'RMB', 'LMB', 'MMB', 'Mouse4', 'Mouse5', etc.
+      - Keyboard: 'shift', 'alt', 'ctrl', 'f1'-'f12', 'c', 'v', 'space', 'capslock', etc.
+      - Special: 'always' (returns True), 'none' (returns False)
     """
     if not key_name:
         return False
 
     name_lower = str(key_name).strip().lower()
+    
+    if name_lower in ("always", "auto", "on"):
+        return True
+    if name_lower in ("none", "off", "disabled"):
+        return False
 
     # Check Windows API if on Windows
     if sys.platform == "win32":
         try:
             import ctypes
-            # Check if it's in known VK mapping (mouse or modifiers)
+            # Check if it's in known VK mapping (mouse or modifiers or function keys)
             if name_lower in VK_MAPPING:
                 vk = VK_MAPPING[name_lower]
                 return (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000) != 0
             
-            # Check single char key
-            if len(name_lower) == 1 and name_lower.isalnum():
+            # Check single char key (A-Z, 0-9)
+            if len(name_lower) == 1 and (name_lower.isalnum() or name_lower in "`[];',./=-"):
                 vk = ctypes.windll.user32.VkKeyScanA(ord(name_lower[0])) & 0xFF
                 if vk > 0:
                     return (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000) != 0
@@ -126,7 +141,7 @@ def record_key_or_mouse(timeout=10.0):
                             time.sleep(0.01)
                         return name
 
-                # Check common modifiers and keys via GetAsyncKeyState
+                # Check common modifiers and function keys
                 for name, vk in VK_MAPPING.items():
                     if vk not in MOUSE_VK_NAMES and (user32.GetAsyncKeyState(vk) & 0x8000) != 0:
                         while (user32.GetAsyncKeyState(vk) & 0x8000) != 0:
@@ -149,7 +164,7 @@ def record_key_or_mouse(timeout=10.0):
         try:
             event = keyboard.read_event()
             if event.event_type == keyboard.KEY_DOWN:
-                return event.name
+                return event.name.upper() if len(event.name) <= 3 else event.name.capitalize()
         except Exception:
             pass
 

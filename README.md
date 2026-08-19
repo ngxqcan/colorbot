@@ -19,8 +19,15 @@ A high-performance colorbot for Valorant optimized for **1-PC standalone setups*
 - **Humanized Smoothing & Head Offset**:
   - Adjustable smoothing factor for natural cursor tracking.
   - Configurable Head Y-Offset to lock onto head level rather than center of mass.
-- **Hold & Toggle Aim Modes**:
-  - Support for Hold mode (active only while key is held down) and Toggle mode.
+- **Hold & Toggle Aim Modes with 0ms Lag**:
+  - Support for `Hold` mode (active only while key is held down), `Toggle` mode, and `Always` mode.
+  - Independent Global Master Hotkey (e.g. `F1`) to toggle the bot without tabbing out.
+- **Real-Time Live HUD Preview**:
+  - Live 30–60 FPS video stream of captured FOV directly inside the UI or via floating Popout Window.
+  - **Camera + HUD Mode**: Displays center crosshair (+), FOV bounds, enemy bounding box, and cyan head-aim dot.
+  - **HSV Color Mask Mode**: Real-time binary mask to easily calibrate Purple/Yellow/Red enemy colors.
+  - **Split View Mode**: Side-by-side Camera & Mask view.
+  - **Live Telemetry**: Real-time FPS, Target Lock status (`[ LOCKED ]`), distance calculations, and key state.
 
 ---
 
@@ -54,21 +61,31 @@ python main.py
 ## ⚙️ Configuration Guide
 
 ### Aimbot Settings:
-- **Aimbot Active**: Enable / Disable aimbot.
-- **Key**: Keybind to trigger/toggle aimbot (e.g. `f1`, `alt`, `shift`, `c`).
-- **Aim Mode**: `Hold` (active while held down) or `Toggle`.
+- **Aimbot Master Enable**: Main switch to activate the Aimbot engine.
+- **Master Hotkey**: Global hotkey (`F1`) to toggle Aimbot ON/OFF from in-game.
+- **Aim Key**: Key to hold or press for aim assistance (e.g. `RMB`, `Mouse4`, `Mouse5`, `Alt`, `Shift`, `C`).
+- **Aim Mode**:
+  - `Hold`: Locks/tracks enemies only while Aim Key is held down.
+  - `Toggle`: Pressing Aim Key toggles active tracking.
+  - `Always`: Continuously tracks enemies inside FOV.
 - **Enemy Color**: `Purple` (default enemy highlight), `Yellow` (Deuteranopia), or `Red`.
 - **FOV**: Bounding box size centered on crosshair (40–100 px recommended).
 - **Game Sensitivity**: Match your exact in-game Valorant sensitivity (e.g. `0.35`).
-- **Smoothing Speed**: Factor from 0.05 (slow/smooth) to 1.0 (instant snap).
-- **Head Y Offset**: Pixels above torso center to target head level (default `8`–`12`).
+- **Smoothing Factor**: Factor from 0.05 (slow/smooth) to 1.0 (instant snap).
+- **Head Y-Offset**: Pixels above torso center to target head level (default `8`–`12`).
 
 ### Triggerbot Settings:
-- **Triggerbot Active**: Enable / Disable triggerbot.
-- **Key**: Keybind to toggle triggerbot (`f2`).
+- **Triggerbot Master Enable**: Main switch to enable triggerbot.
+- **Trigger Key**: Keybind to trigger/toggle triggerbot (`F2`, `Mouse5`, etc.).
 - **Shot Delay**: Delay in milliseconds before firing (default `25ms`).
 
-### Driver Settings (Misc tab):
+### Live Preview Tab:
+- **Stream Live**: Toggle real-time preview canvas ON/OFF.
+- **View Mode**: Switch between `Camera + HUD`, `HSV Color Mask`, and `Split View`.
+- **Zoom Level**: Magnify small FOVs (`1x`, `1.5x`, `2x`, `3x`).
+- **Popout Window**: Opens a floating HUD window for dual-monitor setups.
+
+### Driver Settings (Settings tab):
 - **Capture Driver**: `Auto` (detects fastest DXCam/MSS), `DXCam`, `MSS`, `GDI`, `NDI`.
 - **Mouse Driver**: `Auto`, `Win32` (1-PC Direct API), `Makcu` (Hardware device).
 
@@ -84,14 +101,15 @@ python main.py
 └── src/
     ├── main.py         # Main execution logic
     ├── core/
-    │   └── colorbot.py # Detection, math scaling, & aimbot loop
+    │   └── colorbot.py # Detection, math scaling, aim loop & preview data
     ├── drivers/
     │   ├── mouse.py    # 1-PC Win32 API & Makcu hardware driver
     │   └── screen.py   # DXCam, MSS, GDI & NDI multi-driver capture
     ├── ui/
-    │   └── app.py      # CustomTkinter UI with full 1-PC controls
+    │   └── app.py      # CustomTkinter UI with Live Preview & HUD controls
     └── utils/
-        └── config_manager.py # JSON configuration manager
+        ├── config_manager.py # JSON configuration manager
+        └── input_handler.py  # Global key listener & VK mappings
 ```
 
 ---
