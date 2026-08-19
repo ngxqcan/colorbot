@@ -41,17 +41,18 @@ class App(customtkinter.CTk):
         self.aim_enabled = bool(self.config_manager.get('AIM_ENABLED', False))
         self.aim_key = self.config_manager.get('AIM_KEY', 'RMB')
         self.aim_mode = self.config_manager.get('AIM_MODE', 'Hold')
-        self.fov = float(self.config_manager.get('FOV', 60))
+        self.aim_target = self.config_manager.get('AIM_TARGET', 'Head')
+        self.fov = float(self.config_manager.get('FOV', 45))
         self.shared_color = self.config_manager.get('ENEMY_COLOR', 'Purple')
         self.sensitivity = float(self.config_manager.get('SENSITIVITY', 0.35))
-        self.smoothing = float(self.config_manager.get('SMOOTHING', 0.3))
-        self.head_offset = int(self.config_manager.get('HEAD_OFFSET', 8))
+        self.smoothing = float(self.config_manager.get('SMOOTHING', 0.18))
+        self.head_offset = int(self.config_manager.get('HEAD_OFFSET', 7))
 
         # Triggerbot variables
         self.trigger_enabled = bool(self.config_manager.get('TRIGGER_ENABLED', False))
         self.trigger_key = self.config_manager.get('TRIGGER_KEY', 'f2')
         self.trigger_mode = self.config_manager.get('TRIGGER_MODE', 'Toggle')
-        self.trigger_delay = float(self.config_manager.get('TRIGGER_DELAY', 25))
+        self.trigger_delay = float(self.config_manager.get('TRIGGER_DELAY', 30))
 
         # Misc variables
         self.resolution = self.config_manager.get('RESOLUTION', [1920, 1080])
@@ -62,7 +63,6 @@ class App(customtkinter.CTk):
         # Preview variables (256x256 canvas)
         self.preview_enabled = True
         self.preview_mode = self.config_manager.get('PREVIEW_MODE', 'Camera + HUD')
-        self.preview_zoom = self.config_manager.get('PREVIEW_ZOOM', 'Auto (256x256)')
 
         self.is_recording_key = False
         self.colorbot = None
@@ -76,7 +76,7 @@ class App(customtkinter.CTk):
         except Exception:
             pass
 
-        self.geometry("900x480")
+        self.geometry("920x500")
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         
@@ -166,7 +166,7 @@ class App(customtkinter.CTk):
     def _setup_aimbot_page(self):
         # Row 0: Master Switch & Hotkey
         top_bar = customtkinter.CTkFrame(self.aimbot_frame, fg_color="transparent")
-        top_bar.grid(row=0, column=0, columnspan=4, padx=10, pady=(10, 5), sticky="ew")
+        top_bar.grid(row=0, column=0, columnspan=4, padx=10, pady=(6, 4), sticky="ew")
 
         self.switch_aim = customtkinter.CTkSwitch(
             top_bar, text="Aimbot Master Enable", 
@@ -177,74 +177,107 @@ class App(customtkinter.CTk):
         if self.aim_enabled:
             self.switch_aim.select()
 
+        # Preset Quick Buttons
+        preset_box = customtkinter.CTkFrame(top_bar, fg_color="#18181b", corner_radius=6)
+        preset_box.pack(side="left", padx=15)
+        
+        customtkinter.CTkLabel(preset_box, text="Presets:", font=customtkinter.CTkFont(size=11, weight="bold"), text_color="#71717a").pack(side="left", padx=(8, 4), pady=2)
+        
+        customtkinter.CTkButton(
+            preset_box, text="🎯 Legit", width=55, height=22,
+            command=lambda: self.apply_preset("legit"),
+            font=customtkinter.CTkFont(size=11), fg_color="#059669", hover_color="#047857"
+        ).pack(side="left", padx=2, pady=2)
+        
+        customtkinter.CTkButton(
+            preset_box, text="🧲 Magnet", width=65, height=22,
+            command=lambda: self.apply_preset("magnet"),
+            font=customtkinter.CTkFont(size=11), fg_color="#0284c7", hover_color="#0369a1"
+        ).pack(side="left", padx=2, pady=2)
+
+        customtkinter.CTkButton(
+            preset_box, text="⚡ Rage", width=50, height=22,
+            command=lambda: self.apply_preset("rage"),
+            font=customtkinter.CTkFont(size=11), fg_color="#dc2626", hover_color="#b91c1c"
+        ).pack(side="left", padx=(2, 6), pady=2)
+
         self.button_master_hotkey = customtkinter.CTkButton(
-            top_bar, text=f"Master Hotkey: {self.master_toggle_key.upper()}", 
+            top_bar, text=f"Hotkey: {self.master_toggle_key.upper()}", 
             command=lambda: self.change_key_text("master"), 
-            width=140, font=customtkinter.CTkFont(size=12)
+            width=100, height=26, font=customtkinter.CTkFont(size=11)
         )
         self.button_master_hotkey.pack(side="right", padx=5)
 
-        # Row 1: Key, Mode, Color
+        # Row 1: Key, Mode, Bone Target, Enemy Color
         row1 = customtkinter.CTkFrame(self.aimbot_frame, fg_color="#18181b", corner_radius=8)
-        row1.grid(row=1, column=0, columnspan=4, padx=10, pady=6, sticky="ew")
+        row1.grid(row=1, column=0, columnspan=4, padx=10, pady=4, sticky="ew")
 
-        customtkinter.CTkLabel(row1, text="Aim Key:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(10, 4), pady=8)
+        customtkinter.CTkLabel(row1, text="Key:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
         self.button_aim_key = customtkinter.CTkButton(
             row1, text=f"{self.aim_key}", 
             command=lambda: self.change_key_text("aim"), 
-            width=100, font=customtkinter.CTkFont(size=12, weight="bold")
+            width=80, height=26, font=customtkinter.CTkFont(size=12, weight="bold")
         )
-        self.button_aim_key.pack(side="left", padx=4, pady=8)
+        self.button_aim_key.pack(side="left", padx=3, pady=6)
 
-        customtkinter.CTkLabel(row1, text="Mode:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(12, 4), pady=8)
+        customtkinter.CTkLabel(row1, text="Mode:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
         self.combobox_aim_mode = customtkinter.CTkComboBox(
-            row1, values=["Hold", "Toggle", "Always"], 
-            command=self.aim_mode_callback, width=95,
+            row1, values=["Hold", "Magnet", "Toggle", "Always"], 
+            command=self.aim_mode_callback, width=90, height=26,
             font=customtkinter.CTkFont(size=12)
         )
-        self.combobox_aim_mode.pack(side="left", padx=4, pady=8)
+        self.combobox_aim_mode.pack(side="left", padx=3, pady=6)
         self.combobox_aim_mode.set(self.aim_mode)
 
-        customtkinter.CTkLabel(row1, text="Enemy Color:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(12, 4), pady=8)
-        self.combobox_aim_color = customtkinter.CTkComboBox(
-            row1, values=["Purple", "Yellow", "Red"], 
-            command=self.color_change_callback, width=100,
+        customtkinter.CTkLabel(row1, text="Target Bone:", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8").pack(side="left", padx=(8, 3), pady=6)
+        self.combobox_aim_target = customtkinter.CTkComboBox(
+            row1, values=["Head", "Neck", "Body", "Auto"], 
+            command=self.aim_target_callback, width=85, height=26,
             font=customtkinter.CTkFont(size=12)
         )
-        self.combobox_aim_color.pack(side="left", padx=4, pady=8)
+        self.combobox_aim_target.pack(side="left", padx=3, pady=6)
+        self.combobox_aim_target.set(self.aim_target)
+
+        customtkinter.CTkLabel(row1, text="Color:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
+        self.combobox_aim_color = customtkinter.CTkComboBox(
+            row1, values=["Purple", "Yellow", "Red"], 
+            command=self.color_change_callback, width=85, height=26,
+            font=customtkinter.CTkFont(size=12)
+        )
+        self.combobox_aim_color.pack(side="left", padx=(3, 8), pady=6)
         self.combobox_aim_color.set(self.shared_color)
 
         # Row 2: FOV Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="FOV (Capture Box):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=6, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="FOV (Capture Box):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=5, sticky="w")
         self.slider_aim_FOV = customtkinter.CTkSlider(self.aimbot_frame, from_=20, to=250, command=self.FOV_slider_callback)
-        self.slider_aim_FOV.grid(row=2, column=1, columnspan=2, padx=5, pady=6, sticky="ew")
+        self.slider_aim_FOV.grid(row=2, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
         self.slider_aim_FOV.set(self.fov)
         self.label_aim_FOV_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=str(int(self.fov)))
-        self.label_aim_FOV_value.grid(row=2, column=3, padx=5, pady=6)
+        self.label_aim_FOV_value.grid(row=2, column=3, padx=5, pady=5)
 
         # Row 3: Sensitivity Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="In-Game Sensitivity:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=3, column=0, padx=10, pady=6, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="In-Game Sensitivity:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=3, column=0, padx=10, pady=5, sticky="w")
         self.slider_sens = customtkinter.CTkSlider(self.aimbot_frame, from_=0.05, to=1.5, command=self.sens_slider_callback)
-        self.slider_sens.grid(row=3, column=1, columnspan=2, padx=5, pady=6, sticky="ew")
+        self.slider_sens.grid(row=3, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
         self.slider_sens.set(self.sensitivity)
         self.label_sens_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=f"{self.sensitivity:.2f}")
-        self.label_sens_value.grid(row=3, column=3, padx=5, pady=6)
+        self.label_sens_value.grid(row=3, column=3, padx=5, pady=5)
 
         # Row 4: Smoothing Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="Smoothing Factor:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=4, column=0, padx=10, pady=6, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="Smoothing Factor:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=4, column=0, padx=10, pady=5, sticky="w")
         self.slider_smooth = customtkinter.CTkSlider(self.aimbot_frame, from_=0.05, to=1.0, command=self.smooth_slider_callback)
-        self.slider_smooth.grid(row=4, column=1, columnspan=2, padx=5, pady=6, sticky="ew")
+        self.slider_smooth.grid(row=4, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
         self.slider_smooth.set(self.smoothing)
         self.label_smooth_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=f"{self.smoothing:.2f}")
-        self.label_smooth_value.grid(row=4, column=3, padx=5, pady=6)
+        self.label_smooth_value.grid(row=4, column=3, padx=5, pady=5)
 
         # Row 5: Head Offset Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="Head Y-Offset:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=5, column=0, padx=10, pady=6, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="Head Y-Offset:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=5, column=0, padx=10, pady=5, sticky="w")
         self.slider_head = customtkinter.CTkSlider(self.aimbot_frame, from_=0, to=25, command=self.head_slider_callback)
-        self.slider_head.grid(row=5, column=1, columnspan=2, padx=5, pady=6, sticky="ew")
+        self.slider_head.grid(row=5, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
         self.slider_head.set(self.head_offset)
         self.label_head_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=str(int(self.head_offset)))
-        self.label_head_value.grid(row=5, column=3, padx=5, pady=6)
+        self.label_head_value.grid(row=5, column=3, padx=5, pady=5)
 
     def _setup_triggerbot_page(self):
         # Row 0: Master Switch
@@ -425,6 +458,59 @@ class App(customtkinter.CTk):
     def show_frame(self, frame):
         frame.tkraise()
 
+    def apply_preset(self, preset_name):
+        """Applies legit, magnet, or rage preset configuration."""
+        if preset_name == "legit":
+            self.fov = 45
+            self.smoothing = 0.18
+            self.aim_target = "Head"
+            self.aim_mode = "Hold"
+            self.head_offset = 7
+            self.trigger_delay = 35
+        elif preset_name == "magnet":
+            self.fov = 45
+            self.smoothing = 0.20
+            self.aim_target = "Head"
+            self.aim_mode = "Magnet"
+            self.head_offset = 7
+            self.trigger_delay = 30
+        elif preset_name == "rage":
+            self.fov = 85
+            self.smoothing = 0.45
+            self.aim_target = "Head"
+            self.aim_mode = "Hold"
+            self.head_offset = 8
+            self.trigger_delay = 20
+
+        # Update sliders & comboboxes
+        self.slider_aim_FOV.set(self.fov)
+        self.label_aim_FOV_value.configure(text=str(int(self.fov)))
+        self.slider_smooth.set(self.smoothing)
+        self.label_smooth_value.configure(text=f"{self.smoothing:.2f}")
+        self.slider_head.set(self.head_offset)
+        self.label_head_value.configure(text=str(self.head_offset))
+        self.slider_trigger_delay.set(self.trigger_delay)
+        self.label_trigger_delay_value.configure(text=str(int(self.trigger_delay)))
+        self.combobox_aim_target.set(self.aim_target)
+        self.combobox_aim_mode.set(self.aim_mode)
+
+        if self.colorbot:
+            self.colorbot.smoothing = self.smoothing
+            self.colorbot.aim_target = self.aim_target
+            self.colorbot.aim_mode = self.aim_mode
+            self.colorbot.head_offset = self.head_offset
+            self.colorbot.trigger_delay = self.trigger_delay / 1000.0
+            try:
+                res_parts = self.resolution_input.get().split('x')
+                w, h = int(res_parts[0]), int(res_parts[1])
+            except Exception:
+                w, h = 1920, 1080
+            cx, cy = w // 2, h // 2
+            self.colorbot.update_roi(cx, cy, self.fov)
+
+        self.save_config()
+        self.status_label.configure(text=f"● Preset '{preset_name.title()}' Applied!", text_color="#38bdf8")
+
     def toggle_aim_master(self):
         self.aim_enabled = bool(self.switch_aim.get())
         self._ensure_engine_running()
@@ -465,6 +551,7 @@ class App(customtkinter.CTk):
                     trigger_enabled=self.trigger_enabled,
                     aim_mode=self.aim_mode,
                     trigger_mode=self.trigger_mode,
+                    aim_target=self.aim_target,
                     sensitivity=self.sensitivity,
                     smoothing=self.smoothing,
                     head_offset=self.head_offset,
@@ -479,6 +566,7 @@ class App(customtkinter.CTk):
                 self.colorbot.trigger_enabled = self.trigger_enabled
                 self.colorbot.aim_mode = self.aim_mode
                 self.colorbot.trigger_mode = self.trigger_mode
+                self.colorbot.aim_target = self.aim_target
                 self.colorbot.color_name = self.shared_color
                 self.colorbot.sensitivity = self.sensitivity
                 self.colorbot.smoothing = self.smoothing
@@ -502,11 +590,10 @@ class App(customtkinter.CTk):
                     # 1. Global Master Hotkey (Toggles Master Aimbot Switch)
                     master_pressed = is_key_pressed(self.master_toggle_key)
                     if master_pressed and not master_hotkey_was_pressed:
-                        # Safely trigger toggle on main thread
                         self.after(0, self._on_master_hotkey_triggered)
                     master_hotkey_was_pressed = master_pressed
 
-                    # 2. Aim Key Handling (Hold / Toggle / Always)
+                    # 2. Aim Key Handling (Hold / Magnet / Toggle / Always)
                     aim_pressed = is_key_pressed(self.aim_key)
                     if self.colorbot:
                         self.colorbot.is_aim_key_pressed = aim_pressed
@@ -565,7 +652,8 @@ class App(customtkinter.CTk):
 
                     # Update Telemetry Stats Bar
                     if target.get("found", False):
-                        self.lbl_target_status.configure(text="Target: [ LOCKED ]", text_color="#22c55e")
+                        bone_name = target.get("bone", self.aim_target)
+                        self.lbl_target_status.configure(text=f"Target: [ LOCKED ({bone_name}) ]", text_color="#22c55e")
                         self.lbl_target_delta.configure(
                             text=f"dX: {target['x_diff']:+d}px | dY: {target['y_diff']:+d}px (Dist: {target['dist']}px)"
                         )
@@ -582,7 +670,10 @@ class App(customtkinter.CTk):
                     if is_aiming:
                         self.aim_status_badge.configure(text="Aim: [ TRACKING ]", text_color="#38bdf8")
                     elif self.colorbot.is_aim_key_pressed:
-                        self.aim_status_badge.configure(text="Aim: [ HELD ]", text_color="#a855f7")
+                        if self.aim_mode == "Magnet":
+                            self.aim_status_badge.configure(text="Aim: [ MAGNET ]", text_color="#06b6d4")
+                        else:
+                            self.aim_status_badge.configure(text="Aim: [ HELD ]", text_color="#a855f7")
                     else:
                         self.aim_status_badge.configure(text="Aim: IDLE", text_color="#a1a1aa")
                 else:
@@ -635,14 +726,16 @@ class App(customtkinter.CTk):
             box_color = (0, 255, 0) if not is_aiming else (0, 165, 255)
             cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 1)
 
-            # Head Lock Target Point (Cyan Dot)
+            # Target Lock Bone Point (Cyan Dot)
             cv2.circle(display, (tcX, target_y), 3, (255, 255, 0), -1)
 
-            # Tracking Line from Crosshair to Head Point
+            # Tracking Line from Crosshair to Target Point
             cv2.line(display, (cx, cy), (tcX, target_y), (255, 255, 0), 1)
 
         # 5. On-Screen Watermark / Telemetry HUD Text
-        info_text = f"{fps:.0f}FPS | {latency_ms:.2f}ms"
+        bone_tag = self.aim_target.upper()[:4]
+        mode_tag = "MAG" if self.aim_mode == "Magnet" else "AIM"
+        info_text = f"{fps:.0f}FPS | {latency_ms:.2f}ms | {mode_tag}:{bone_tag}"
         cv2.putText(display, info_text, (4, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1, cv2.LINE_AA)
 
         return display
@@ -686,7 +779,7 @@ class App(customtkinter.CTk):
                     self.button_aim_key.configure(text=f"{recorded}", fg_color=["#3a7ebf", "#1f538d"])
                 elif key_target == "master":
                     self.master_toggle_key = recorded
-                    self.button_master_hotkey.configure(text=f"Master Hotkey: {recorded.upper()}", fg_color=["#3a7ebf", "#1f538d"])
+                    self.button_master_hotkey.configure(text=f"Hotkey: {recorded.upper()}", fg_color=["#3a7ebf", "#1f538d"])
                 else:
                     self.trigger_key = recorded
                     self.button_trigger_key.configure(text=f"{recorded}", fg_color=["#3a7ebf", "#1f538d"])
@@ -695,7 +788,7 @@ class App(customtkinter.CTk):
                 if key_target == "aim":
                     target_btn.configure(text=f"{self.aim_key}", fg_color=["#3a7ebf", "#1f538d"])
                 elif key_target == "master":
-                    target_btn.configure(text=f"Master Hotkey: {self.master_toggle_key.upper()}", fg_color=["#3a7ebf", "#1f538d"])
+                    target_btn.configure(text=f"Hotkey: {self.master_toggle_key.upper()}", fg_color=["#3a7ebf", "#1f538d"])
                 else:
                     target_btn.configure(text=f"{self.trigger_key}", fg_color=["#3a7ebf", "#1f538d"])
             self.is_recording_key = False
@@ -706,6 +799,11 @@ class App(customtkinter.CTk):
         self.aim_mode = new_mode
         if self.colorbot:
             self.colorbot.aim_mode = new_mode
+
+    def aim_target_callback(self, new_target):
+        self.aim_target = new_target
+        if self.colorbot:
+            self.colorbot.aim_target = new_target
 
     def trigger_mode_callback(self, new_mode):
         self.trigger_mode = new_mode
@@ -774,8 +872,9 @@ class App(customtkinter.CTk):
             self.switch_trigger.deselect()
 
         self.button_aim_key.configure(text=f"{self.aim_key}")
-        self.button_master_hotkey.configure(text=f"Master Hotkey: {self.master_toggle_key.upper()}")
+        self.button_master_hotkey.configure(text=f"Hotkey: {self.master_toggle_key.upper()}")
         self.combobox_aim_mode.set(self.aim_mode)
+        self.combobox_aim_target.set(self.aim_target)
         self.button_trigger_key.configure(text=f"{self.trigger_key}")
         self.combobox_trigger_mode.set(self.trigger_mode)
         self.slider_aim_FOV.set(self.fov)
@@ -802,6 +901,7 @@ class App(customtkinter.CTk):
             "MASTER_TOGGLE_KEY": self.master_toggle_key,
             "AIM_KEY": self.aim_key,
             "AIM_MODE": self.combobox_aim_mode.get(),
+            "AIM_TARGET": self.combobox_aim_target.get(),
             "AIM_ENABLED": self.aim_enabled,
             "TRIGGER_KEY": self.trigger_key,
             "TRIGGER_MODE": self.combobox_trigger_mode.get(),

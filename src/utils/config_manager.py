@@ -5,21 +5,22 @@ DEFAULT_CONFIG = {
     "MASTER_TOGGLE_KEY": "f1",
     "AIM_KEY": "RMB",
     "AIM_MODE": "Hold",
+    "AIM_TARGET": "Head",
     "AIM_ENABLED": False,
     "TRIGGER_KEY": "f2",
     "TRIGGER_MODE": "Toggle",
     "TRIGGER_ENABLED": False,
-    "TRIGGER_DELAY": 25,
-    "FOV": 60,
+    "TRIGGER_DELAY": 30,
+    "FOV": 45,
     "RESOLUTION": ["1920", "1080"],
     "ENEMY_COLOR": "Purple",
     "SENSITIVITY": 0.35,
-    "SMOOTHING": 0.3,
-    "HEAD_OFFSET": 8,
+    "SMOOTHING": 0.18,
+    "HEAD_OFFSET": 7,
     "CAPTURE_METHOD": "Auto",
     "MOUSE_METHOD": "Auto",
-    "PREVIEW_MODE": "Overlay",
-    "PREVIEW_ZOOM": "2x"
+    "PREVIEW_MODE": "Camera + HUD",
+    "PREVIEW_ZOOM": "256x256"
 }
 
 class ConfigManager:
@@ -37,7 +38,6 @@ class ConfigManager:
             with open(self.config_path, 'r') as file:
                 data = json.load(file)
                 # Merge missing keys from DEFAULT_CONFIG
-                # Also migrate legacy keys if present
                 if "TOGGLE_KEY" in data and "AIM_KEY" not in data:
                     data["AIM_KEY"] = data["TOGGLE_KEY"]
                 for k, v in DEFAULT_CONFIG.items():

@@ -21,6 +21,7 @@ class ScreenCapture:
         self.method = method.lower() if method else "auto"
         
         self.screen = np.zeros((self.grabzone, self.grabzone, 3), dtype=np.uint8)
+        self.frame_id = 0
         self.lock = threading.Lock()
         self.running = True
         self.active_driver = "none"
@@ -161,6 +162,7 @@ class ScreenCapture:
             if frame is not None:
                 with self.lock:
                     self.screen = frame
+                    self.frame_id += 1
                 self._update_fps()
             else:
                 time.sleep(0.001)
@@ -238,6 +240,11 @@ class ScreenCapture:
         """Returns the latest captured frame slice."""
         with self.lock:
             return self.screen.copy()
+
+    def get_screen_with_id(self):
+        """Returns the latest frame and frame sequence ID."""
+        with self.lock:
+            return self.screen.copy(), self.frame_id
 
     def stop(self):
         """Stops the capture thread and releases driver handles."""

@@ -8,9 +8,8 @@ from drivers.mouse import PicoMouse
 
 class Colorbot:
     """
-    High-Speed Color Detection, Target Tracking & Preview Engine for Valorant.
+    High-Precision Color Detection, Target Tracking & Magnet Engine for Valorant.
     """
-    # Tuned HSV ranges for Valorant enemy outlines
     COLOR_RANGES = {
         "Purple": {
             "lower": np.array([140, 105, 120]),
@@ -29,8 +28,8 @@ class Colorbot:
     }
 
     def __init__(self, x, y, grabzone, color_name="Purple", aim_enabled=False, trigger_enabled=False,
-                 aim_mode="Hold", trigger_mode="Toggle",
-                 sensitivity=0.35, smoothing=0.3, head_offset=8, trigger_delay=25,
+                 aim_mode="Hold", trigger_mode="Toggle", aim_target="Head",
+                 sensitivity=0.35, smoothing=0.18, head_offset=7, trigger_delay=25,
                  capture_method="auto", mouse_method="auto"):
         self.x = int(x)
         self.y = int(y)
@@ -41,9 +40,12 @@ class Colorbot:
         self.aim_enabled = bool(aim_enabled)
         self.trigger_enabled = bool(trigger_enabled)
         
-        # Modes ('Hold', 'Toggle', 'Always')
+        # Modes ('Hold', 'Magnet', 'Toggle', 'Always')
         self.aim_mode = aim_mode
         self.trigger_mode = trigger_mode
+        
+        # Target Bone ('Head', 'Neck', 'Body', 'Auto')
+        self.aim_target = aim_target
         
         # Dynamic live key states
         self.is_aim_key_pressed = False
@@ -57,6 +59,11 @@ class Colorbot:
         self.trigger_delay = max(0, int(trigger_delay)) / 1000.0  # convert ms to sec
         
         self.last_trigger_time = 0.0
+
+        # Sub-pixel accumulator to eliminate float-rounding jitter
+        self.acc_x = 0.0
+        self.acc_y = 0.0
+        self.last_processed_frame_id = -1
 
         # Enable high-resolution Windows timer if on Windows
         if sys.platform == "win32":
@@ -110,17 +117,38 @@ class Colorbot:
             self.thread = None
 
     def _run(self):
-        """Main processing loop running at maximum frequency."""
+        """Main processing loop running smoothly without overshooting."""
         while self.running:
             self.process()
-            time.sleep(0.0005)
+            time.sleep(0.001)
+
+    def _calculate_target_y(self, y, h, gz_center):
+        """Calculates vertical target point based on chosen bone (Head, Neck, Body, Auto)."""
+        target_mode = self.aim_target.lower() if self.aim_target else "head"
+        
+        if "body" in target_mode or "chest" in target_mode:
+            return y + int(h * 0.50)
+        elif "neck" in target_mode:
+            return y + int(h * 0.28)
+        elif "auto" in target_mode:
+            # Pick bone closest to crosshair center
+            head_y = y + min(self.head_offset, max(2, int(h * 0.18)))
+            neck_y = y + int(h * 0.28)
+            body_y = y + int(h * 0.50)
+            bones = [head_y, neck_y, body_y]
+            return min(bones, key=lambda by: abs(by - gz_center))
+        else: # "head" default
+            return y + min(self.head_offset, max(2, int(h * 0.18)))
 
     def process(self):
         t_start = time.perf_counter()
         
-        screen = self.grabber.get_screen()
+        screen, frame_id = self.grabber.get_screen_with_id()
         if screen is None or screen.size == 0:
             return
+
+        is_new_frame = (frame_id != self.last_processed_frame_id)
+        self.last_processed_frame_id = frame_id
 
         # Screen is ROI (grabzone x grabzone)
         hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
@@ -151,10 +179,7 @@ class Colorbot:
                 x, y, w, h = cv2.boundingRect(best_contour)
                 
                 cX = x + w // 2
-                cY = y + h // 2
-                
-                # Head target location: top of contour + head_offset
-                target_y = y + min(self.head_offset, max(1, h // 3))
+                target_y = self._calculate_target_y(y, h, gz_center)
                 
                 x_diff = cX - gz_center
                 y_diff = target_y - gz_center
@@ -163,36 +188,25 @@ class Colorbot:
                 target_info = {
                     "found": True,
                     "x": x, "y": y, "w": w, "h": h,
-                    "cX": cX, "cY": cY,
+                    "cX": cX, "cY": y + h // 2,
                     "target_y": target_y,
                     "x_diff": x_diff, "y_diff": y_diff,
-                    "dist": round(dist, 1)
+                    "dist": round(dist, 1),
+                    "bone": self.aim_target
                 }
 
-                # 1. Aimbot Logic
+                # Determine active states based on Aim Mode
+                is_magnet_mode = (self.aim_mode == "Magnet")
+                
                 should_aim = False
                 if self.aim_enabled:
-                    if self.aim_mode == "Hold":
+                    if self.aim_mode == "Hold" or is_magnet_mode:
                         should_aim = self.is_aim_key_pressed
                     elif self.aim_mode == "Toggle":
                         should_aim = self.aim_toggled
                     elif self.aim_mode == "Always":
                         should_aim = True
 
-                if should_aim:
-                    # Valorant sensitivity to pixel displacement scaling formula:
-                    # 1.07437623 * (Sensitivity ^ -0.9936827126)
-                    sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
-                    
-                    move_x = x_diff * sens_scale * self.smoothing
-                    move_y = y_diff * sens_scale * self.smoothing
-                    
-                    # Deadzone threshold
-                    if abs(move_x) >= 0.4 or abs(move_y) >= 0.4:
-                        self.mouse.move(move_x, move_y)
-                        aiming_this_tick = True
-
-                # 2. Triggerbot Logic
                 should_trigger = False
                 if self.trigger_enabled:
                     if self.trigger_mode == "Hold":
@@ -202,11 +216,55 @@ class Colorbot:
                     elif self.trigger_mode == "Always":
                         should_trigger = True
 
+                # In Magnet mode, trigger activates whenever aim key is held and target is in crosshair
+                if is_magnet_mode and self.aim_enabled and self.is_aim_key_pressed:
+                    should_trigger = True
+
+                # 1. Aimbot Logic (Smooth Humanized Interpolation)
+                if should_aim and is_new_frame:
+                    # Deadzone threshold: within 1px, stop to prevent micro-jitter
+                    if dist > 0.8:
+                        # Valorant sensitivity to pixel displacement scaling formula:
+                        # 1.07437623 * (Sensitivity ^ -0.9936827126)
+                        sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
+                        
+                        target_move_x = x_diff * sens_scale
+                        target_move_y = y_diff * sens_scale
+                        
+                        # Apply humanized smoothing
+                        smooth_factor = max(0.02, min(1.0, self.smoothing))
+                        step_x = target_move_x * smooth_factor
+                        step_y = target_move_y * smooth_factor
+
+                        # Velocity Limiter (Clamps maximum movement per frame to prevent violent whipping)
+                        max_step = max(3.0, dist * 0.45 * (self.smoothing + 0.5))
+                        step_dist = np.hypot(step_x, step_y)
+                        if step_dist > max_step:
+                            scale = max_step / step_dist
+                            step_x *= scale
+                            step_y *= scale
+
+                        # Sub-pixel accumulator
+                        self.acc_x += step_x
+                        self.acc_y += step_y
+                        
+                        dx = int(round(self.acc_x))
+                        dy = int(round(self.acc_y))
+                        
+                        if dx != 0 or dy != 0:
+                            self.acc_x -= dx
+                            self.acc_y -= dy
+                            self.mouse.move(dx, dy)
+                            aiming_this_tick = True
+
+                # 2. Triggerbot / Magnet Auto-Fire Logic
                 if should_trigger:
                     # Check if crosshair center (gz_center, gz_center) falls within target bounding box
-                    if abs(cX - gz_center) <= max(3, w // 2) and abs(cY - gz_center) <= max(6, h // 2):
+                    hitbox_w = max(4, w // 2)
+                    hitbox_h = max(6, h // 2)
+                    if abs(cX - gz_center) <= hitbox_w and abs(y + h // 2 - gz_center) <= hitbox_h:
                         now = time.time()
-                        if now - self.last_trigger_time >= (self.trigger_delay + 0.15):
+                        if now - self.last_trigger_time >= (self.trigger_delay + 0.12):
                             if self.trigger_delay > 0:
                                 time.sleep(self.trigger_delay)
                             self.mouse.click("left")
@@ -223,7 +281,6 @@ class Colorbot:
             self.last_target = target_info
             self.is_aiming_now = aiming_this_tick
             self.is_triggering_now = triggering_this_tick
-            # Exponential smoothed latency
             self.latency_ms = 0.85 * self.latency_ms + 0.15 * t_elapsed_ms if self.latency_ms > 0 else t_elapsed_ms
 
         self._update_fps()
