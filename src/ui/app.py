@@ -42,6 +42,9 @@ class App(customtkinter.CTk):
         self.aim_key = self.config_manager.get('AIM_KEY', 'RMB')
         self.aim_mode = self.config_manager.get('AIM_MODE', 'Hold')
         self.aim_target = self.config_manager.get('AIM_TARGET', 'Head')
+        self.magnet_mode = self.config_manager.get('MAGNET_MODE', 'Tap')
+        self.burst_count = int(self.config_manager.get('BURST_COUNT', 2))
+        self.burst_delay = int(self.config_manager.get('BURST_DELAY', 80))
         self.fov = float(self.config_manager.get('FOV', 45))
         self.shared_color = self.config_manager.get('ENEMY_COLOR', 'Purple')
         self.sensitivity = float(self.config_manager.get('SENSITIVITY', 0.35))
@@ -60,9 +63,11 @@ class App(customtkinter.CTk):
         self.mouse_method = self.config_manager.get('MOUSE_METHOD', 'Auto')
         self.formatted_resolution = f"{self.resolution[0]}x{self.resolution[1]}"
 
-        # Preview variables (256x256 canvas)
+        # Preview variables (Configurable size: 360x360 default)
         self.preview_enabled = True
         self.preview_mode = self.config_manager.get('PREVIEW_MODE', 'Camera + HUD')
+        self.preview_size_str = self.config_manager.get('PREVIEW_SIZE', '360x360')
+        self.preview_dim = 360
 
         self.is_recording_key = False
         self.colorbot = None
@@ -76,7 +81,7 @@ class App(customtkinter.CTk):
         except Exception:
             pass
 
-        self.geometry("920x500")
+        self.geometry("980x560")
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         
@@ -164,12 +169,12 @@ class App(customtkinter.CTk):
         self.show_frame(self.aimbot_frame)
 
     def _setup_aimbot_page(self):
-        # Row 0: Master Switch & Hotkey
+        # Row 0: Master Switch & Hotkey & Presets
         top_bar = customtkinter.CTkFrame(self.aimbot_frame, fg_color="transparent")
         top_bar.grid(row=0, column=0, columnspan=4, padx=10, pady=(6, 4), sticky="ew")
 
         self.switch_aim = customtkinter.CTkSwitch(
-            top_bar, text="Aimbot Master Enable", 
+            top_bar, text="Aimbot Master", 
             font=customtkinter.CTkFont(size=14, weight="bold"), 
             command=self.toggle_aim_master
         )
@@ -179,20 +184,26 @@ class App(customtkinter.CTk):
 
         # Preset Quick Buttons
         preset_box = customtkinter.CTkFrame(top_bar, fg_color="#18181b", corner_radius=6)
-        preset_box.pack(side="left", padx=15)
+        preset_box.pack(side="left", padx=10)
         
-        customtkinter.CTkLabel(preset_box, text="Presets:", font=customtkinter.CTkFont(size=11, weight="bold"), text_color="#71717a").pack(side="left", padx=(8, 4), pady=2)
+        customtkinter.CTkLabel(preset_box, text="Presets:", font=customtkinter.CTkFont(size=11, weight="bold"), text_color="#71717a").pack(side="left", padx=(6, 3), pady=2)
         
         customtkinter.CTkButton(
-            preset_box, text="🎯 Legit", width=55, height=22,
+            preset_box, text="🎯 Legit", width=52, height=22,
             command=lambda: self.apply_preset("legit"),
             font=customtkinter.CTkFont(size=11), fg_color="#059669", hover_color="#047857"
         ).pack(side="left", padx=2, pady=2)
         
         customtkinter.CTkButton(
-            preset_box, text="🧲 Magnet", width=65, height=22,
-            command=lambda: self.apply_preset("magnet"),
+            preset_box, text="🧲 Mag Tap", width=65, height=22,
+            command=lambda: self.apply_preset("mag_tap"),
             font=customtkinter.CTkFont(size=11), fg_color="#0284c7", hover_color="#0369a1"
+        ).pack(side="left", padx=2, pady=2)
+
+        customtkinter.CTkButton(
+            preset_box, text="💥 Mag Burst", width=70, height=22,
+            command=lambda: self.apply_preset("mag_burst"),
+            font=customtkinter.CTkFont(size=11), fg_color="#7c3aed", hover_color="#6d28d9"
         ).pack(side="left", padx=2, pady=2)
 
         customtkinter.CTkButton(
@@ -204,11 +215,11 @@ class App(customtkinter.CTk):
         self.button_master_hotkey = customtkinter.CTkButton(
             top_bar, text=f"Hotkey: {self.master_toggle_key.upper()}", 
             command=lambda: self.change_key_text("master"), 
-            width=100, height=26, font=customtkinter.CTkFont(size=11)
+            width=95, height=26, font=customtkinter.CTkFont(size=11)
         )
         self.button_master_hotkey.pack(side="right", padx=5)
 
-        # Row 1: Key, Mode, Bone Target, Enemy Color
+        # Row 1: Key, Mode, Magnet Fire, Bone Target, Enemy Color
         row1 = customtkinter.CTkFrame(self.aimbot_frame, fg_color="#18181b", corner_radius=8)
         row1.grid(row=1, column=0, columnspan=4, padx=10, pady=4, sticky="ew")
 
@@ -216,32 +227,41 @@ class App(customtkinter.CTk):
         self.button_aim_key = customtkinter.CTkButton(
             row1, text=f"{self.aim_key}", 
             command=lambda: self.change_key_text("aim"), 
-            width=80, height=26, font=customtkinter.CTkFont(size=12, weight="bold")
+            width=75, height=26, font=customtkinter.CTkFont(size=12, weight="bold")
         )
         self.button_aim_key.pack(side="left", padx=3, pady=6)
 
-        customtkinter.CTkLabel(row1, text="Mode:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
+        customtkinter.CTkLabel(row1, text="Mode:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(6, 3), pady=6)
         self.combobox_aim_mode = customtkinter.CTkComboBox(
             row1, values=["Hold", "Magnet", "Toggle", "Always"], 
-            command=self.aim_mode_callback, width=90, height=26,
+            command=self.aim_mode_callback, width=85, height=26,
             font=customtkinter.CTkFont(size=12)
         )
         self.combobox_aim_mode.pack(side="left", padx=3, pady=6)
         self.combobox_aim_mode.set(self.aim_mode)
 
-        customtkinter.CTkLabel(row1, text="Target Bone:", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8").pack(side="left", padx=(8, 3), pady=6)
+        customtkinter.CTkLabel(row1, text="Magnet Fire:", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8").pack(side="left", padx=(6, 3), pady=6)
+        self.combobox_magnet_fire = customtkinter.CTkComboBox(
+            row1, values=["Tap", "Burst (2-Shot)", "Burst (3-Shot)", "Continuous"], 
+            command=self.magnet_fire_callback, width=110, height=26,
+            font=customtkinter.CTkFont(size=11)
+        )
+        self.combobox_magnet_fire.pack(side="left", padx=3, pady=6)
+        self.combobox_magnet_fire.set(self.magnet_mode)
+
+        customtkinter.CTkLabel(row1, text="Bone:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(6, 3), pady=6)
         self.combobox_aim_target = customtkinter.CTkComboBox(
             row1, values=["Head", "Neck", "Body", "Auto"], 
-            command=self.aim_target_callback, width=85, height=26,
+            command=self.aim_target_callback, width=75, height=26,
             font=customtkinter.CTkFont(size=12)
         )
         self.combobox_aim_target.pack(side="left", padx=3, pady=6)
         self.combobox_aim_target.set(self.aim_target)
 
-        customtkinter.CTkLabel(row1, text="Color:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
+        customtkinter.CTkLabel(row1, text="Color:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(6, 3), pady=6)
         self.combobox_aim_color = customtkinter.CTkComboBox(
             row1, values=["Purple", "Yellow", "Red"], 
-            command=self.color_change_callback, width=85, height=26,
+            command=self.color_change_callback, width=80, height=26,
             font=customtkinter.CTkFont(size=12)
         )
         self.combobox_aim_color.pack(side="left", padx=(3, 8), pady=6)
@@ -341,50 +361,57 @@ class App(customtkinter.CTk):
             font=customtkinter.CTkFont(size=12, weight="bold"), 
             command=self.toggle_preview_stream
         )
-        self.switch_preview.pack(side="left", padx=10, pady=6)
+        self.switch_preview.pack(side="left", padx=8, pady=6)
         if self.preview_enabled:
             self.switch_preview.select()
 
-        customtkinter.CTkLabel(toolbar, text="View:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(10, 4), pady=6)
+        customtkinter.CTkLabel(toolbar, text="View:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
         self.combobox_preview_mode = customtkinter.CTkComboBox(
             toolbar, values=["Camera + HUD", "HSV Color Mask", "Split View"], 
-            command=self.preview_mode_callback, width=130,
+            command=self.preview_mode_callback, width=125, height=26,
             font=customtkinter.CTkFont(size=11)
         )
-        self.combobox_preview_mode.pack(side="left", padx=4, pady=6)
+        self.combobox_preview_mode.pack(side="left", padx=3, pady=6)
         self.combobox_preview_mode.set(self.preview_mode)
 
-        # Resolution badge
-        res_badge = customtkinter.CTkLabel(
-            toolbar, text="256x256 HD",
-            fg_color="#27272a", text_color="#38bdf8",
-            corner_radius=6, font=customtkinter.CTkFont(size=11, weight="bold")
+        customtkinter.CTkLabel(toolbar, text="Size:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
+        self.combobox_preview_size = customtkinter.CTkComboBox(
+            toolbar, values=["360x360", "320x320", "400x400", "256x256"], 
+            command=self.preview_size_callback, width=95, height=26,
+            font=customtkinter.CTkFont(size=11)
         )
-        res_badge.pack(side="left", padx=(10, 4), pady=6)
+        self.combobox_preview_size.pack(side="left", padx=3, pady=6)
+        self.combobox_preview_size.set(self.preview_size_str)
+
+        # Quick FOV adjustment directly on Preview Page
+        customtkinter.CTkLabel(toolbar, text="FOV:", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8").pack(side="left", padx=(8, 3), pady=6)
+        self.slider_preview_fov = customtkinter.CTkSlider(toolbar, from_=20, to=200, width=100, command=self.FOV_slider_callback)
+        self.slider_preview_fov.pack(side="left", padx=3, pady=6)
+        self.slider_preview_fov.set(self.fov)
 
         self.btn_popout = customtkinter.CTkButton(
-            toolbar, text="↗ Popout Window", 
+            toolbar, text="↗ Popout", 
             command=self.toggle_popout_window,
-            width=110, height=26,
+            width=80, height=26,
             font=customtkinter.CTkFont(size=11, weight="bold"),
             fg_color="#059669", hover_color="#047857"
         )
-        self.btn_popout.pack(side="right", padx=10, pady=6)
+        self.btn_popout.pack(side="right", padx=8, pady=6)
 
-        # Main 256x256 Display Area Container
+        # Main Display Area Container
         display_outer = customtkinter.CTkFrame(self.preview_frame, fg_color="#09090b", corner_radius=8)
         display_outer.pack(fill="both", expand=True, padx=10, pady=4)
 
-        # Centered 256x256 preview box
-        self.preview_box = customtkinter.CTkFrame(display_outer, width=256, height=256, fg_color="#000000", corner_radius=4)
+        # Preview box
+        self.preview_box = customtkinter.CTkFrame(display_outer, width=self.preview_dim, height=self.preview_dim, fg_color="#000000", corner_radius=6)
         self.preview_box.pack(expand=True, pady=4)
         self.preview_box.pack_propagate(False)
 
         self.preview_label = customtkinter.CTkLabel(
             self.preview_box, 
-            text="[ 256x256 Canvas Initializing... ]",
+            text="[ Live HD Canvas Initializing... ]",
             text_color="#71717a",
-            font=customtkinter.CTkFont(size=12)
+            font=customtkinter.CTkFont(size=13)
         )
         self.preview_label.pack(expand=True, fill="both")
 
@@ -407,6 +434,14 @@ class App(customtkinter.CTk):
             font=customtkinter.CTkFont(size=11)
         )
         self.lbl_target_delta.pack(side="left", padx=10, pady=4)
+
+        self.lbl_fov_live = customtkinter.CTkLabel(
+            self.telemetry_bar, 
+            text=f"FOV: {int(self.fov)}px", 
+            text_color="#38bdf8",
+            font=customtkinter.CTkFont(size=11, weight="bold")
+        )
+        self.lbl_fov_live.pack(side="left", padx=12, pady=4)
 
         self.lbl_fps_stat = customtkinter.CTkLabel(
             self.telemetry_bar, 
@@ -458,22 +493,41 @@ class App(customtkinter.CTk):
     def show_frame(self, frame):
         frame.tkraise()
 
+    def preview_size_callback(self, new_size_str):
+        self.preview_size_str = new_size_str
+        try:
+            dim = int(new_size_str.split('x')[0])
+            self.preview_dim = dim
+            self.preview_box.configure(width=dim, height=dim)
+        except Exception:
+            pass
+
     def apply_preset(self, preset_name):
-        """Applies legit, magnet, or rage preset configuration."""
+        """Applies legit, magnet tap, magnet burst, or rage preset configuration."""
         if preset_name == "legit":
             self.fov = 45
             self.smoothing = 0.18
             self.aim_target = "Head"
             self.aim_mode = "Hold"
+            self.magnet_mode = "Tap"
             self.head_offset = 7
             self.trigger_delay = 35
-        elif preset_name == "magnet":
+        elif preset_name == "mag_tap":
             self.fov = 45
             self.smoothing = 0.20
             self.aim_target = "Head"
             self.aim_mode = "Magnet"
+            self.magnet_mode = "Tap"
             self.head_offset = 7
-            self.trigger_delay = 30
+            self.trigger_delay = 25
+        elif preset_name == "mag_burst":
+            self.fov = 45
+            self.smoothing = 0.20
+            self.aim_target = "Head"
+            self.aim_mode = "Magnet"
+            self.magnet_mode = "Burst (2-Shot)"
+            self.head_offset = 7
+            self.trigger_delay = 25
         elif preset_name == "rage":
             self.fov = 85
             self.smoothing = 0.45
@@ -484,7 +538,9 @@ class App(customtkinter.CTk):
 
         # Update sliders & comboboxes
         self.slider_aim_FOV.set(self.fov)
+        self.slider_preview_fov.set(self.fov)
         self.label_aim_FOV_value.configure(text=str(int(self.fov)))
+        self.lbl_fov_live.configure(text=f"FOV: {int(self.fov)}px")
         self.slider_smooth.set(self.smoothing)
         self.label_smooth_value.configure(text=f"{self.smoothing:.2f}")
         self.slider_head.set(self.head_offset)
@@ -493,11 +549,13 @@ class App(customtkinter.CTk):
         self.label_trigger_delay_value.configure(text=str(int(self.trigger_delay)))
         self.combobox_aim_target.set(self.aim_target)
         self.combobox_aim_mode.set(self.aim_mode)
+        self.combobox_magnet_fire.set(self.magnet_mode)
 
         if self.colorbot:
             self.colorbot.smoothing = self.smoothing
             self.colorbot.aim_target = self.aim_target
             self.colorbot.aim_mode = self.aim_mode
+            self.colorbot.magnet_mode = self.magnet_mode
             self.colorbot.head_offset = self.head_offset
             self.colorbot.trigger_delay = self.trigger_delay / 1000.0
             try:
@@ -509,7 +567,7 @@ class App(customtkinter.CTk):
             self.colorbot.update_roi(cx, cy, self.fov)
 
         self.save_config()
-        self.status_label.configure(text=f"● Preset '{preset_name.title()}' Applied!", text_color="#38bdf8")
+        self.status_label.configure(text=f"● Preset '{preset_name.replace('_', ' ').title()}' Applied!", text_color="#38bdf8")
 
     def toggle_aim_master(self):
         self.aim_enabled = bool(self.switch_aim.get())
@@ -552,6 +610,9 @@ class App(customtkinter.CTk):
                     aim_mode=self.aim_mode,
                     trigger_mode=self.trigger_mode,
                     aim_target=self.aim_target,
+                    magnet_mode=self.magnet_mode,
+                    burst_count=self.burst_count,
+                    burst_delay=self.burst_delay,
                     sensitivity=self.sensitivity,
                     smoothing=self.smoothing,
                     head_offset=self.head_offset,
@@ -567,6 +628,7 @@ class App(customtkinter.CTk):
                 self.colorbot.aim_mode = self.aim_mode
                 self.colorbot.trigger_mode = self.trigger_mode
                 self.colorbot.aim_target = self.aim_target
+                self.colorbot.magnet_mode = self.magnet_mode
                 self.colorbot.color_name = self.shared_color
                 self.colorbot.sensitivity = self.sensitivity
                 self.colorbot.smoothing = self.smoothing
@@ -627,17 +689,18 @@ class App(customtkinter.CTk):
         self.toggle_aim_master()
 
     def _update_preview_loop(self):
-        """Renders live 256x256 HUD preview at 30 FPS with real-time FPS and Latency."""
+        """Renders live HUD preview at 30 FPS with real-time FPS, Latency, and dynamic FOV overlay."""
         try:
             if self.preview_enabled and self.colorbot:
-                frame, mask, target, fps, latency_ms, is_aiming, is_triggering = self.colorbot.get_preview_data()
+                frame, mask, target, fps, latency_ms, is_aiming, is_triggering, gz = self.colorbot.get_preview_data()
                 
                 if frame is not None and frame.size > 0:
-                    rendered = self._render_hud(frame, mask, target, fps, latency_ms, is_aiming)
+                    rendered = self._render_hud(frame, mask, target, fps, latency_ms, is_aiming, gz)
                     
-                    # Force exact 256x256 resolution output with crisp nearest-neighbor interpolation
-                    resized_256 = cv2.resize(rendered, (256, 256), interpolation=cv2.INTER_NEAREST)
-                    rgb_img = cv2.cvtColor(resized_256, cv2.COLOR_BGR2RGB)
+                    # Scale to selected display dimension (e.g. 360x360, 400x400)
+                    dim = getattr(self, 'preview_dim', 360)
+                    resized = cv2.resize(rendered, (dim, dim), interpolation=cv2.INTER_NEAREST)
+                    rgb_img = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(rgb_img)
                     
                     self.current_frame_img = ImageTk.PhotoImage(pil_img)
@@ -665,6 +728,7 @@ class App(customtkinter.CTk):
                     lat_color = "#22c55e" if latency_ms < 1.0 else ("#eab308" if latency_ms < 3.0 else "#ef4444")
                     self.lbl_latency_stat.configure(text=f"⚡ {latency_ms:.2f} ms", text_color=lat_color)
                     self.lbl_fps_stat.configure(text=f"FPS: {fps:.0f}")
+                    self.lbl_fov_live.configure(text=f"FOV: {gz}px")
 
                     # Update Sidebar Aim Status badge
                     if is_aiming:
@@ -689,8 +753,8 @@ class App(customtkinter.CTk):
         # Schedule next preview frame (33ms = ~30 FPS)
         self.after(33, self._update_preview_loop)
 
-    def _render_hud(self, frame, mask, target, fps, latency_ms, is_aiming):
-        """Draws HUD overlays, bounding boxes, crosshair, head marker, and telemetry text."""
+    def _render_hud(self, frame, mask, target, fps, latency_ms, is_aiming, gz):
+        """Draws HUD overlays, bounding boxes, crosshair, head marker, live FOV ring, and telemetry text."""
         gz_h, gz_w = frame.shape[:2]
         cx, cy = gz_w // 2, gz_h // 2
 
@@ -711,11 +775,13 @@ class App(customtkinter.CTk):
 
         # 2. Draw Crosshair (+) at Center
         crosshair_color = (0, 255, 255) if is_aiming else (0, 255, 0)
-        cv2.line(display, (cx - 5, cy), (cx + 5, cy), crosshair_color, 1)
-        cv2.line(display, (cx, cy - 5), (cx, cy + 5), crosshair_color, 1)
+        cv2.line(display, (cx - 6, cy), (cx + 6, cy), crosshair_color, 1)
+        cv2.line(display, (cx, cy - 6), (cx, cy + 6), crosshair_color, 1)
 
-        # 3. Draw FOV Boundary Box
-        cv2.rectangle(display, (0, 0), (gz_w - 1, gz_h - 1), (50, 50, 50), 1)
+        # 3. Draw FOV Boundary Circle & Box (Real-time FOV visualization)
+        fov_radius = max(4, gz // 2 - 1)
+        cv2.circle(display, (cx, cy), fov_radius, (0, 255, 255), 1)
+        cv2.rectangle(display, (0, 0), (gz_w - 1, gz_h - 1), (60, 60, 60), 1)
 
         # 4. Draw Detected Target Overlays
         if target.get("found", False):
@@ -734,22 +800,25 @@ class App(customtkinter.CTk):
 
         # 5. On-Screen Watermark / Telemetry HUD Text
         bone_tag = self.aim_target.upper()[:4]
-        mode_tag = "MAG" if self.aim_mode == "Magnet" else "AIM"
-        info_text = f"{fps:.0f}FPS | {latency_ms:.2f}ms | {mode_tag}:{bone_tag}"
-        cv2.putText(display, info_text, (4, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1, cv2.LINE_AA)
+        if self.aim_mode == "Magnet":
+            mag_tag = "MAG-BURST" if "burst" in self.magnet_mode.lower() else "MAG-TAP"
+        else:
+            mag_tag = "AIM"
+        info_text = f"{fps:.0f}FPS | {latency_ms:.2f}ms | FOV:{gz}px | {mag_tag}:{bone_tag}"
+        cv2.putText(display, info_text, (4, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 255, 255), 1, cv2.LINE_AA)
 
         return display
 
     def toggle_popout_window(self):
-        """Opens or closes a standalone 256x256 floating preview window."""
+        """Opens or closes a standalone resizable floating preview window."""
         if self.popout_window is None or not self.popout_window.winfo_exists():
             self.popout_window = customtkinter.CTkToplevel(self)
-            self.popout_window.title("HUD Live Preview [256x256]")
-            self.popout_window.geometry("290x310")
+            self.popout_window.title("HUD Live Preview")
+            self.popout_window.geometry("390x410")
             self.popout_window.attributes("-topmost", True)
             
             self.popout_label = customtkinter.CTkLabel(
-                self.popout_window, text="[ Floating 256x256 HUD ]",
+                self.popout_window, text="[ Floating HD HUD Stream ]",
                 font=customtkinter.CTkFont(size=12)
             )
             self.popout_label.pack(expand=True, fill="both", padx=10, pady=10)
@@ -769,7 +838,7 @@ class App(customtkinter.CTk):
         else:
             target_btn = self.button_trigger_key
 
-        target_btn.configure(text="[Press Key/Mouse...]", fg_color="#e67e22")
+        target_btn.configure(text="[Press Key...]", fg_color="#e67e22")
 
         def listener():
             recorded = record_key_or_mouse(timeout=8.0)
@@ -800,6 +869,11 @@ class App(customtkinter.CTk):
         if self.colorbot:
             self.colorbot.aim_mode = new_mode
 
+    def magnet_fire_callback(self, new_fire_mode):
+        self.magnet_mode = new_fire_mode
+        if self.colorbot:
+            self.colorbot.magnet_mode = new_fire_mode
+
     def aim_target_callback(self, new_target):
         self.aim_target = new_target
         if self.colorbot:
@@ -823,6 +897,9 @@ class App(customtkinter.CTk):
     def FOV_slider_callback(self, value):
         self.fov = max(10, (int(value) // 2) * 2)
         self.label_aim_FOV_value.configure(text=str(int(self.fov)))
+        self.slider_preview_fov.set(self.fov)
+        self.slider_aim_FOV.set(self.fov)
+        self.lbl_fov_live.configure(text=f"FOV: {int(self.fov)}px")
         if self.colorbot:
             try:
                 res_parts = self.resolution_input.get().split('x')
@@ -874,11 +951,14 @@ class App(customtkinter.CTk):
         self.button_aim_key.configure(text=f"{self.aim_key}")
         self.button_master_hotkey.configure(text=f"Hotkey: {self.master_toggle_key.upper()}")
         self.combobox_aim_mode.set(self.aim_mode)
+        self.combobox_magnet_fire.set(self.magnet_mode)
         self.combobox_aim_target.set(self.aim_target)
         self.button_trigger_key.configure(text=f"{self.trigger_key}")
         self.combobox_trigger_mode.set(self.trigger_mode)
         self.slider_aim_FOV.set(self.fov)
+        self.slider_preview_fov.set(self.fov)
         self.label_aim_FOV_value.configure(text=str(int(self.fov)))
+        self.lbl_fov_live.configure(text=f"FOV: {int(self.fov)}px")
         self.slider_sens.set(self.sensitivity)
         self.label_sens_value.configure(text=f"{self.sensitivity:.2f}")
         self.slider_smooth.set(self.smoothing)
@@ -891,6 +971,8 @@ class App(customtkinter.CTk):
         self.combobox_mouse.set(self.mouse_method)
         self.combobox_aim_color.set(self.shared_color)
         self.combobox_trigger_color.set(self.shared_color)
+        self.combobox_preview_size.set(self.preview_size_str)
+        self.preview_size_callback(self.preview_size_str)
         self.resolution_input.delete(0, 'end')
         self.resolution_input.insert(0, self.formatted_resolution)
         self._ensure_engine_running()
@@ -902,6 +984,9 @@ class App(customtkinter.CTk):
             "AIM_KEY": self.aim_key,
             "AIM_MODE": self.combobox_aim_mode.get(),
             "AIM_TARGET": self.combobox_aim_target.get(),
+            "MAGNET_MODE": self.combobox_magnet_fire.get(),
+            "BURST_COUNT": self.burst_count,
+            "BURST_DELAY": self.burst_delay,
             "AIM_ENABLED": self.aim_enabled,
             "TRIGGER_KEY": self.trigger_key,
             "TRIGGER_MODE": self.combobox_trigger_mode.get(),
@@ -915,7 +1000,8 @@ class App(customtkinter.CTk):
             "HEAD_OFFSET": int(self.head_offset),
             "CAPTURE_METHOD": self.combobox_capture.get(),
             "MOUSE_METHOD": self.combobox_mouse.get(),
-            "PREVIEW_MODE": self.combobox_preview_mode.get()
+            "PREVIEW_MODE": self.combobox_preview_mode.get(),
+            "PREVIEW_SIZE": self.combobox_preview_size.get()
         }
         self.config_manager.save_config(config)
         self.status_label.configure(text="● Config Saved!", text_color="#38bdf8")

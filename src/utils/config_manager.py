@@ -7,6 +7,9 @@ DEFAULT_CONFIG = {
     "AIM_MODE": "Hold",
     "AIM_TARGET": "Head",
     "AIM_ENABLED": False,
+    "MAGNET_MODE": "Tap",
+    "BURST_COUNT": 2,
+    "BURST_DELAY": 80,
     "TRIGGER_KEY": "f2",
     "TRIGGER_MODE": "Toggle",
     "TRIGGER_ENABLED": False,
@@ -20,7 +23,7 @@ DEFAULT_CONFIG = {
     "CAPTURE_METHOD": "Auto",
     "MOUSE_METHOD": "Auto",
     "PREVIEW_MODE": "Camera + HUD",
-    "PREVIEW_ZOOM": "256x256"
+    "PREVIEW_SIZE": "360x360"
 }
 
 class ConfigManager:

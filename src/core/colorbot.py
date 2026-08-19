@@ -29,6 +29,7 @@ class Colorbot:
 
     def __init__(self, x, y, grabzone, color_name="Purple", aim_enabled=False, trigger_enabled=False,
                  aim_mode="Hold", trigger_mode="Toggle", aim_target="Head",
+                 magnet_mode="Tap", burst_count=2, burst_delay=80,
                  sensitivity=0.35, smoothing=0.18, head_offset=7, trigger_delay=25,
                  capture_method="auto", mouse_method="auto"):
         self.x = int(x)
@@ -47,6 +48,11 @@ class Colorbot:
         # Target Bone ('Head', 'Neck', 'Body', 'Auto')
         self.aim_target = aim_target
         
+        # Magnet Firing Mode ('Tap', 'Burst (2-Shot)', 'Burst (3-Shot)', 'Continuous')
+        self.magnet_mode = magnet_mode
+        self.burst_count = max(1, int(burst_count))
+        self.burst_delay = max(10, int(burst_delay)) / 1000.0  # seconds
+
         # Dynamic live key states
         self.is_aim_key_pressed = False
         self.is_trigger_key_pressed = False
@@ -59,6 +65,7 @@ class Colorbot:
         self.trigger_delay = max(0, int(trigger_delay)) / 1000.0  # convert ms to sec
         
         self.last_trigger_time = 0.0
+        self.is_bursting = False
 
         # Sub-pixel accumulator to eliminate float-rounding jitter
         self.acc_x = 0.0
@@ -139,6 +146,23 @@ class Colorbot:
             return min(bones, key=lambda by: abs(by - gz_center))
         else: # "head" default
             return y + min(self.head_offset, max(2, int(h * 0.18)))
+
+    def _execute_magnet_fire(self):
+        """Handles Tap vs Burst vs Continuous firing logic in Magnet mode."""
+        mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
+        
+        if "burst" in mode_str:
+            # Determine burst count from mode string or self.burst_count
+            shots = 3 if "3" in mode_str else (2 if "2" in mode_str else self.burst_count)
+            for _ in range(shots):
+                self.mouse.click("left", delay=0.015)
+                time.sleep(self.burst_delay)
+            # Recovery cooldown after burst
+            time.sleep(0.05)
+        elif "continuous" in mode_str or "spray" in mode_str:
+            self.mouse.click("left", delay=0.02)
+        else: # "tap" mode
+            self.mouse.click("left", delay=0.015)
 
     def process(self):
         t_start = time.perf_counter()
@@ -264,10 +288,23 @@ class Colorbot:
                     hitbox_h = max(6, h // 2)
                     if abs(cX - gz_center) <= hitbox_w and abs(y + h // 2 - gz_center) <= hitbox_h:
                         now = time.time()
-                        if now - self.last_trigger_time >= (self.trigger_delay + 0.12):
+                        
+                        # Determine cooldown based on Magnet Tap vs Burst vs Standard trigger
+                        if is_magnet_mode:
+                            mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
+                            cooldown = 0.28 if "burst" in mode_str else 0.18
+                        else:
+                            cooldown = 0.12
+                            
+                        if now - self.last_trigger_time >= (self.trigger_delay + cooldown):
                             if self.trigger_delay > 0:
                                 time.sleep(self.trigger_delay)
-                            self.mouse.click("left")
+                            
+                            if is_magnet_mode:
+                                self._execute_magnet_fire()
+                            else:
+                                self.mouse.click("left")
+                                
                             self.last_trigger_time = time.time()
                             triggering_this_tick = True
 
@@ -297,7 +334,7 @@ class Colorbot:
     def get_preview_data(self):
         """
         Thread-safe getter for the UI Live Preview canvas.
-        Returns: (frame, mask, target_info, fps, latency_ms, is_aiming_now, is_triggering_now)
+        Returns: (frame, mask, target_info, fps, latency_ms, is_aiming_now, is_triggering_now, grabzone)
         """
         with self.lock:
             frame = self.last_frame.copy() if self.last_frame is not None else None
@@ -307,8 +344,9 @@ class Colorbot:
             latency = self.latency_ms
             is_aiming = self.is_aiming_now
             is_triggering = self.is_triggering_now
+            gz = self.grabzone
             
-        return frame, mask, target, fps, latency, is_aiming, is_triggering
+        return frame, mask, target, fps, latency, is_aiming, is_triggering, gz
 
     def update_roi(self, cx, cy, grabzone):
         """Updates the ROI center and grabzone size."""
