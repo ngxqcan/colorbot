@@ -725,22 +725,25 @@ class App(customtkinter.CTk):
         self.combobox_mouse.set(self.mouse_method)
 
         # Kmbox NET Hardware Config Card
-        km_card = customtkinter.CTkLabelFrame(self.misc_frame, text="Kmbox NET Hardware Settings (2-PC / Network)", font=customtkinter.CTkFont(size=12, weight="bold"))
+        km_card = customtkinter.CTkFrame(self.misc_frame, fg_color="#18181b", corner_radius=8)
         km_card.grid(row=3, column=0, columnspan=2, padx=10, pady=8, sticky="ew")
 
-        customtkinter.CTkLabel(km_card, text="IP:").grid(row=0, column=0, padx=8, pady=4, sticky="w")
-        self.entry_km_ip = customtkinter.CTkEntry(km_card, width=130)
-        self.entry_km_ip.grid(row=0, column=1, padx=6, pady=4)
+        title_lbl = customtkinter.CTkLabel(km_card, text="Kmbox NET Hardware Settings (2-PC / Network)", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8")
+        title_lbl.grid(row=0, column=0, columnspan=4, padx=8, pady=(6, 2), sticky="w")
+
+        customtkinter.CTkLabel(km_card, text="IP:", font=customtkinter.CTkFont(size=11, weight="bold")).grid(row=1, column=0, padx=8, pady=4, sticky="w")
+        self.entry_km_ip = customtkinter.CTkEntry(km_card, width=120, height=24, font=customtkinter.CTkFont(size=11))
+        self.entry_km_ip.grid(row=1, column=1, padx=4, pady=4)
         self.entry_km_ip.insert(0, self.kmnet_ip)
 
-        customtkinter.CTkLabel(km_card, text="Port:").grid(row=0, column=2, padx=8, pady=4, sticky="w")
-        self.entry_km_port = customtkinter.CTkEntry(km_card, width=70)
-        self.entry_km_port.grid(row=0, column=3, padx=6, pady=4)
+        customtkinter.CTkLabel(km_card, text="Port:", font=customtkinter.CTkFont(size=11, weight="bold")).grid(row=1, column=2, padx=8, pady=4, sticky="w")
+        self.entry_km_port = customtkinter.CTkEntry(km_card, width=65, height=24, font=customtkinter.CTkFont(size=11))
+        self.entry_km_port.grid(row=1, column=3, padx=4, pady=4)
         self.entry_km_port.insert(0, str(self.kmnet_port))
 
-        customtkinter.CTkLabel(km_card, text="UUID:").grid(row=1, column=0, padx=8, pady=4, sticky="w")
-        self.entry_km_uuid = customtkinter.CTkEntry(km_card, width=130)
-        self.entry_km_uuid.grid(row=1, column=1, padx=6, pady=4)
+        customtkinter.CTkLabel(km_card, text="UUID:", font=customtkinter.CTkFont(size=11, weight="bold")).grid(row=2, column=0, padx=8, pady=(4, 8), sticky="w")
+        self.entry_km_uuid = customtkinter.CTkEntry(km_card, width=120, height=24, font=customtkinter.CTkFont(size=11))
+        self.entry_km_uuid.grid(row=2, column=1, padx=4, pady=(4, 8))
         self.entry_km_uuid.insert(0, self.kmnet_uuid)
 
         # Row 4: Buttons
