@@ -9,6 +9,7 @@ from drivers.mouse import PicoMouse
 class Colorbot:
     """
     High-Precision Color Detection, Target Tracking & Magnet Engine for Valorant.
+    Includes Silhouette Merging, Center-of-Head targeting, and Anti-Jitter dampening.
     """
     COLOR_RANGES = {
         "Purple": {
@@ -65,12 +66,15 @@ class Colorbot:
         self.trigger_delay = max(0, int(trigger_delay)) / 1000.0  # convert ms to sec
         
         self.last_trigger_time = 0.0
-        self.is_bursting = False
 
         # Sub-pixel accumulator to eliminate float-rounding jitter
         self.acc_x = 0.0
         self.acc_y = 0.0
         self.last_processed_frame_id = -1
+        self.last_filtered_target = None
+
+        # Morphological structuring elements for bridging outline gaps
+        self.close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 9))
 
         # Enable high-resolution Windows timer if on Windows
         if sys.platform == "win32":
@@ -129,36 +133,117 @@ class Colorbot:
             self.process()
             time.sleep(0.001)
 
-    def _calculate_target_y(self, y, h, gz_center):
-        """Calculates vertical target point based on chosen bone (Head, Neck, Body, Auto)."""
+    def _find_unified_targets(self, mask, gz_center):
+        """
+        Connects fragmented enemy outline pixels into full unified character bounding boxes.
+        Finds true horizontal and vertical centers instead of outline edges.
+        """
+        # 1. Close gaps between left & right glowing outlines
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.close_kernel)
+        dilated = cv2.dilate(closed, None, iterations=2)
+        
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None, dilated
+
+        # Filter out tiny noise dots
+        boxes = []
+        for c in contours:
+            if cv2.contourArea(c) >= 12:
+                bx, by, bw, bh = cv2.boundingRect(c)
+                # Ignore aspect ratios that can't be enemy players
+                if bh >= 4 and bw >= 3:
+                    boxes.append([bx, by, bx + bw, by + bh])
+
+        if not boxes:
+            return None, dilated
+
+        # 2. Cluster/merge overlapping boxes of the same enemy silhouette
+        merged_boxes = []
+        for box in sorted(boxes, key=lambda b: (b[0], b[1])):
+            x1, y1, x2, y2 = box
+            merged = False
+            for m in merged_boxes:
+                # If boxes overlap or are within close proximity (same player body parts)
+                if not (x2 + 8 < m[0] or x1 - 8 > m[2] or y2 + 8 < m[1] or y1 - 8 > m[3]):
+                    m[0] = min(m[0], x1)
+                    m[1] = min(m[1], y1)
+                    m[2] = max(m[2], x2)
+                    m[3] = max(m[3], y2)
+                    merged = True
+                    break
+            if not merged:
+                merged_boxes.append([x1, y1, x2, y2])
+
+        # 3. Pick the closest unified character silhouette to crosshair
+        def box_dist(b):
+            cx = (b[0] + b[2]) // 2
+            cy = (b[1] + b[3]) // 2
+            return (cx - gz_center) ** 2 + (cy - gz_center) ** 2
+
+        best = min(merged_boxes, key=box_dist)
+        x = best[0]
+        y = best[1]
+        w = max(4, best[2] - best[0])
+        h = max(6, best[3] - best[1])
+
+        return (x, y, w, h), dilated
+
+    def _calculate_target_point(self, x, y, w, h, gz_center):
+        """
+        Calculates the TRUE center of the head/neck/body inside the character model,
+        not on the colored outline stroke.
+        """
+        # True horizontal center of the character's body/head
+        raw_cX = x + w // 2
+        
         target_mode = self.aim_target.lower() if self.aim_target else "head"
         
         if "body" in target_mode or "chest" in target_mode:
-            return y + int(h * 0.50)
+            raw_target_y = y + int(h * 0.48)
         elif "neck" in target_mode:
-            return y + int(h * 0.28)
+            raw_target_y = y + int(h * 0.25)
         elif "auto" in target_mode:
-            # Pick bone closest to crosshair center
-            head_y = y + min(self.head_offset, max(2, int(h * 0.18)))
-            neck_y = y + int(h * 0.28)
-            body_y = y + int(h * 0.50)
+            head_y = y + min(self.head_offset, max(3, int(h * 0.14)))
+            neck_y = y + int(h * 0.25)
+            body_y = y + int(h * 0.48)
             bones = [head_y, neck_y, body_y]
-            return min(bones, key=lambda by: abs(by - gz_center))
-        else: # "head" default
-            return y + min(self.head_offset, max(2, int(h * 0.18)))
+            raw_target_y = min(bones, key=lambda by: abs(by - gz_center))
+        else: # "head" default - target eyes/nose center inside skull
+            # Head height is roughly top 15%-20% of character silhouette
+            head_offset_clamped = min(self.head_offset, max(3, int(h * 0.18)))
+            raw_target_y = y + head_offset_clamped
+
+        # Target coordinate stabilization filter (prevents detection micro-jitter)
+        if self.last_filtered_target is not None:
+            prev_x, prev_y = self.last_filtered_target
+            delta_dist = np.hypot(raw_cX - prev_x, raw_target_y - prev_y)
+            if delta_dist < 2.5:
+                cX = int(0.70 * prev_x + 0.30 * raw_cX)
+                target_y = int(0.70 * prev_y + 0.30 * raw_target_y)
+            elif delta_dist < 6.0:
+                cX = int(0.40 * prev_x + 0.60 * raw_cX)
+                target_y = int(0.40 * prev_y + 0.60 * raw_target_y)
+            else:
+                cX = raw_cX
+                target_y = raw_target_y
+        else:
+            cX = raw_cX
+            target_y = raw_target_y
+
+        self.last_filtered_target = (cX, target_y)
+        return cX, target_y
 
     def _execute_magnet_fire(self):
         """Handles Tap vs Burst vs Continuous firing logic in Magnet mode."""
         mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
         
         if "burst" in mode_str:
-            # Determine burst count from mode string or self.burst_count
             shots = 3 if "3" in mode_str else (2 if "2" in mode_str else self.burst_count)
             for _ in range(shots):
                 self.mouse.click("left", delay=0.015)
                 time.sleep(self.burst_delay)
-            # Recovery cooldown after burst
-            time.sleep(0.05)
+            time.sleep(0.06)
         elif "continuous" in mode_str or "spray" in mode_str:
             self.mouse.click("left", delay=0.02)
         else: # "tap" mode
@@ -178,135 +263,126 @@ class Colorbot:
         hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
         mask = self._get_color_mask(hsv)
 
-        # Morphological dilation to bridge fragmented outline pixels
-        dilated = cv2.dilate(mask, None, iterations=2)
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
         gz_center = self.grabzone // 2
         target_info = {"found": False}
         aiming_this_tick = False
         triggering_this_tick = False
 
-        if contours:
-            # Filter contours by minimum area (avoid single-pixel noise)
-            valid_contours = [c for c in contours if cv2.contourArea(c) >= 8]
+        # Unified character detection & Silhouette bridging
+        box_data, dilated_mask = self._find_unified_targets(mask, gz_center)
+
+        if box_data is not None:
+            x, y, w, h = box_data
+            cX, target_y = self._calculate_target_point(x, y, w, h, gz_center)
             
-            if valid_contours:
-                # Find closest contour to center crosshair
-                def dist_to_center(c):
-                    bx, by, bw, bh = cv2.boundingRect(c)
-                    cx_c = bx + bw // 2
-                    cy_c = by + bh // 2
-                    return (cx_c - gz_center) ** 2 + (cy_c - gz_center) ** 2
+            x_diff = cX - gz_center
+            y_diff = target_y - gz_center
+            dist = np.hypot(x_diff, y_diff)
 
-                best_contour = min(valid_contours, key=dist_to_center)
-                x, y, w, h = cv2.boundingRect(best_contour)
-                
-                cX = x + w // 2
-                target_y = self._calculate_target_y(y, h, gz_center)
-                
-                x_diff = cX - gz_center
-                y_diff = target_y - gz_center
-                dist = np.hypot(x_diff, y_diff)
+            target_info = {
+                "found": True,
+                "x": x, "y": y, "w": w, "h": h,
+                "cX": cX, "cY": y + h // 2,
+                "target_y": target_y,
+                "x_diff": x_diff, "y_diff": y_diff,
+                "dist": round(dist, 1),
+                "bone": self.aim_target
+            }
 
-                target_info = {
-                    "found": True,
-                    "x": x, "y": y, "w": w, "h": h,
-                    "cX": cX, "cY": y + h // 2,
-                    "target_y": target_y,
-                    "x_diff": x_diff, "y_diff": y_diff,
-                    "dist": round(dist, 1),
-                    "bone": self.aim_target
-                }
+            # Determine active states based on Aim Mode
+            is_magnet_mode = (self.aim_mode == "Magnet")
+            
+            should_aim = False
+            if self.aim_enabled:
+                if self.aim_mode == "Hold" or is_magnet_mode:
+                    should_aim = self.is_aim_key_pressed
+                elif self.aim_mode == "Toggle":
+                    should_aim = self.aim_toggled
+                elif self.aim_mode == "Always":
+                    should_aim = True
 
-                # Determine active states based on Aim Mode
-                is_magnet_mode = (self.aim_mode == "Magnet")
-                
-                should_aim = False
-                if self.aim_enabled:
-                    if self.aim_mode == "Hold" or is_magnet_mode:
-                        should_aim = self.is_aim_key_pressed
-                    elif self.aim_mode == "Toggle":
-                        should_aim = self.aim_toggled
-                    elif self.aim_mode == "Always":
-                        should_aim = True
-
-                should_trigger = False
-                if self.trigger_enabled:
-                    if self.trigger_mode == "Hold":
-                        should_trigger = self.is_trigger_key_pressed
-                    elif self.trigger_mode == "Toggle":
-                        should_trigger = self.trigger_toggled
-                    elif self.trigger_mode == "Always":
-                        should_trigger = True
-
-                # In Magnet mode, trigger activates whenever aim key is held and target is in crosshair
-                if is_magnet_mode and self.aim_enabled and self.is_aim_key_pressed:
+            should_trigger = False
+            if self.trigger_enabled:
+                if self.trigger_mode == "Hold":
+                    should_trigger = self.is_trigger_key_pressed
+                elif self.trigger_mode == "Toggle":
+                    should_trigger = self.trigger_toggled
+                elif self.trigger_mode == "Always":
                     should_trigger = True
 
-                # 1. Aimbot Logic (Smooth Humanized Interpolation)
-                if should_aim and is_new_frame:
-                    # Deadzone threshold: within 1px, stop to prevent micro-jitter
-                    if dist > 0.8:
-                        # Valorant sensitivity to pixel displacement scaling formula:
-                        # 1.07437623 * (Sensitivity ^ -0.9936827126)
-                        sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
-                        
-                        target_move_x = x_diff * sens_scale
-                        target_move_y = y_diff * sens_scale
-                        
-                        # Apply humanized smoothing
-                        smooth_factor = max(0.02, min(1.0, self.smoothing))
-                        step_x = target_move_x * smooth_factor
-                        step_y = target_move_y * smooth_factor
+            # In Magnet mode, trigger activates whenever aim key is held and target is in crosshair
+            if is_magnet_mode and self.aim_enabled and self.is_aim_key_pressed:
+                should_trigger = True
 
-                        # Velocity Limiter (Clamps maximum movement per frame to prevent violent whipping)
-                        max_step = max(3.0, dist * 0.45 * (self.smoothing + 0.5))
-                        step_dist = np.hypot(step_x, step_y)
-                        if step_dist > max_step:
-                            scale = max_step / step_dist
-                            step_x *= scale
-                            step_y *= scale
+            # 1. Aimbot Logic (Anti-Jitter Smooth Humanized Movement)
+            if should_aim and is_new_frame:
+                # Deadzone threshold: within 1.2px, do NOT move (prevents 1px micro-vibration)
+                if dist >= 1.2:
+                    # Valorant sensitivity to pixel displacement scaling formula:
+                    # 1.07437623 * (Sensitivity ^ -0.9936827126)
+                    sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
+                    
+                    target_move_x = x_diff * sens_scale
+                    target_move_y = y_diff * sens_scale
+                    
+                    # Apply smooth factor
+                    smooth_factor = max(0.02, min(1.0, self.smoothing))
+                    
+                    # Ease-in deceleration curve when near crosshair
+                    if dist < 5.0:
+                        ease = min(1.0, (dist / 5.0) ** 1.3)
+                        smooth_factor *= ease
 
-                        # Sub-pixel accumulator
-                        self.acc_x += step_x
-                        self.acc_y += step_y
-                        
-                        dx = int(round(self.acc_x))
-                        dy = int(round(self.acc_y))
-                        
-                        if dx != 0 or dy != 0:
-                            self.acc_x -= dx
-                            self.acc_y -= dy
-                            self.mouse.move(dx, dy)
-                            aiming_this_tick = True
+                    step_x = target_move_x * smooth_factor
+                    step_y = target_move_y * smooth_factor
 
-                # 2. Triggerbot / Magnet Auto-Fire Logic
-                if should_trigger:
-                    # Check if crosshair center (gz_center, gz_center) falls within target bounding box
-                    hitbox_w = max(4, w // 2)
-                    hitbox_h = max(6, h // 2)
-                    if abs(cX - gz_center) <= hitbox_w and abs(y + h // 2 - gz_center) <= hitbox_h:
-                        now = time.time()
+                    # Velocity Limiter (Clamps maximum movement per frame to prevent snappy jerks)
+                    max_step = max(2.5, dist * 0.40 * (self.smoothing + 0.4))
+                    step_dist = np.hypot(step_x, step_y)
+                    if step_dist > max_step:
+                        scale = max_step / step_dist
+                        step_x *= scale
+                        step_y *= scale
+
+                    # Sub-pixel delta accumulator
+                    self.acc_x += step_x
+                    self.acc_y += step_y
+                    
+                    dx = int(round(self.acc_x))
+                    dy = int(round(self.acc_y))
+                    
+                    if dx != 0 or dy != 0:
+                        self.acc_x -= dx
+                        self.acc_y -= dy
+                        self.mouse.move(dx, dy)
+                        aiming_this_tick = True
+
+            # 2. Triggerbot / Magnet Auto-Fire Logic
+            if should_trigger:
+                # Hitbox check centered on head/chest
+                hitbox_w = max(4, w // 2)
+                hitbox_h = max(5, int(h * 0.35))
+                if abs(cX - gz_center) <= hitbox_w and abs(target_y - gz_center) <= hitbox_h:
+                    now = time.time()
+                    if is_magnet_mode:
+                        mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
+                        cooldown = 0.26 if "burst" in mode_str else 0.18
+                    else:
+                        cooldown = 0.12
                         
-                        # Determine cooldown based on Magnet Tap vs Burst vs Standard trigger
+                    if now - self.last_trigger_time >= (self.trigger_delay + cooldown):
+                        if self.trigger_delay > 0:
+                            time.sleep(self.trigger_delay)
+                        
                         if is_magnet_mode:
-                            mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
-                            cooldown = 0.28 if "burst" in mode_str else 0.18
+                            self._execute_magnet_fire()
                         else:
-                            cooldown = 0.12
+                            self.mouse.click("left")
                             
-                        if now - self.last_trigger_time >= (self.trigger_delay + cooldown):
-                            if self.trigger_delay > 0:
-                                time.sleep(self.trigger_delay)
-                            
-                            if is_magnet_mode:
-                                self._execute_magnet_fire()
-                            else:
-                                self.mouse.click("left")
-                                
-                            self.last_trigger_time = time.time()
-                            triggering_this_tick = True
+                        self.last_trigger_time = time.time()
+                        triggering_this_tick = True
+        else:
+            self.last_filtered_target = None
 
         # Measure end-to-end processing latency for this cycle
         t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
@@ -314,7 +390,7 @@ class Colorbot:
         # Store preview and telemetry state thread-safely
         with self.lock:
             self.last_frame = screen
-            self.last_mask = dilated
+            self.last_mask = dilated_mask if dilated_mask is not None else mask
             self.last_target = target_info
             self.is_aiming_now = aiming_this_tick
             self.is_triggering_now = triggering_this_tick
