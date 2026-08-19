@@ -18,6 +18,10 @@
     "TRIGGER_MODE": "Toggle",
     "TRIGGER_ENABLED": false,
     "TRIGGER_DELAY": 20,
+    "TRIGGER_FIRE_MODE": "Tap",
+    "TRIGGER_BURST_COUNT": 3,
+    "TRIGGER_BURST_DELAY": 90,
+    "TRIGGER_COOLDOWN": 220,
     "FOV": 45,
     "RESOLUTION": [
         "1920",

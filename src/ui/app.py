@@ -75,6 +75,10 @@ class App(customtkinter.CTk):
         self.trigger_key = self.config_manager.get('TRIGGER_KEY', 'f2')
         self.trigger_mode = self.config_manager.get('TRIGGER_MODE', 'Toggle')
         self.trigger_delay = float(self.config_manager.get('TRIGGER_DELAY', 30))
+        self.trigger_fire_mode = str(self.config_manager.get('TRIGGER_FIRE_MODE', 'Tap'))
+        self.trigger_burst_count = int(self.config_manager.get('TRIGGER_BURST_COUNT', 3))
+        self.trigger_burst_delay = int(self.config_manager.get('TRIGGER_BURST_DELAY', 90))
+        self.trigger_cooldown = int(self.config_manager.get('TRIGGER_COOLDOWN', 220))
 
         # Kmbox NET variables
         self.kmnet_ip = str(self.config_manager.get('KMNET_IP', '192.168.2.188'))
@@ -542,7 +546,7 @@ class App(customtkinter.CTk):
     def _setup_triggerbot_page(self):
         # Row 0: Master Switch
         top_bar = customtkinter.CTkFrame(self.triggerbot_frame, fg_color="transparent")
-        top_bar.grid(row=0, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+        top_bar.pack(fill="x", padx=10, pady=(6, 4))
 
         self.switch_trigger = customtkinter.CTkSwitch(
             top_bar, text="Triggerbot Master Enable", 
@@ -553,22 +557,22 @@ class App(customtkinter.CTk):
         if self.trigger_enabled:
             self.switch_trigger.select()
 
-        # Row 1: Key, Mode, Color
+        # Row 1: Key, Activation Mode, Color
         row1 = customtkinter.CTkFrame(self.triggerbot_frame, fg_color="#18181b", corner_radius=8)
-        row1.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+        row1.pack(fill="x", padx=10, pady=4)
 
         customtkinter.CTkLabel(row1, text="Trigger Key:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(10, 4), pady=8)
         self.button_trigger_key = customtkinter.CTkButton(
             row1, text=f"{self.trigger_key}", 
             command=lambda: self.change_key_text("trigger"), 
-            width=100, font=customtkinter.CTkFont(size=12, weight="bold")
+            width=90, height=26, font=customtkinter.CTkFont(size=12, weight="bold")
         )
         self.button_trigger_key.pack(side="left", padx=4, pady=8)
 
-        customtkinter.CTkLabel(row1, text="Mode:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(12, 4), pady=8)
+        customtkinter.CTkLabel(row1, text="Activation:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(12, 4), pady=8)
         self.combobox_trigger_mode = customtkinter.CTkComboBox(
             row1, values=["Toggle", "Hold", "Always"], 
-            command=self.trigger_mode_callback, width=95,
+            command=self.trigger_mode_callback, width=95, height=26,
             font=customtkinter.CTkFont(size=12)
         )
         self.combobox_trigger_mode.pack(side="left", padx=4, pady=8)
@@ -577,19 +581,126 @@ class App(customtkinter.CTk):
         customtkinter.CTkLabel(row1, text="Color:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(12, 4), pady=8)
         self.combobox_trigger_color = customtkinter.CTkComboBox(
             row1, values=["Purple", "Yellow", "Red"], 
-            command=self.color_change_callback, width=100,
+            command=self.color_change_callback, width=95, height=26,
             font=customtkinter.CTkFont(size=12)
         )
         self.combobox_trigger_color.pack(side="left", padx=4, pady=8)
         self.combobox_trigger_color.set(self.shared_color)
 
-        # Row 2: Delay Slider
-        customtkinter.CTkLabel(self.triggerbot_frame, text="Shot Delay (ms):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=15, sticky="w")
-        self.slider_trigger_delay = customtkinter.CTkSlider(self.triggerbot_frame, from_=0, to=200, command=self.delay_slider_callback)
-        self.slider_trigger_delay.grid(row=2, column=1, padx=5, pady=15, sticky="ew")
+        # Row 2: Firing Action & Reaction Delay
+        row2 = customtkinter.CTkFrame(self.triggerbot_frame, fg_color="#18181b", corner_radius=8)
+        row2.pack(fill="x", padx=10, pady=4)
+        row2.grid_columnconfigure(3, weight=1)
+
+        customtkinter.CTkLabel(row2, text="Firing Mode:", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8").grid(row=0, column=0, padx=(10, 4), pady=8, sticky="w")
+        self.combobox_trigger_fire_mode = customtkinter.CTkComboBox(
+            row2, values=["Tap", "Burst", "Continuous"], 
+            command=self._on_trigger_fire_mode_change, width=110, height=26,
+            font=customtkinter.CTkFont(size=12)
+        )
+        self.combobox_trigger_fire_mode.grid(row=0, column=1, padx=4, pady=8)
+        self.combobox_trigger_fire_mode.set(self.trigger_fire_mode)
+
+        customtkinter.CTkLabel(row2, text="Reaction Delay:", font=customtkinter.CTkFont(size=12, weight="bold")).grid(row=0, column=2, padx=(16, 4), pady=8, sticky="w")
+        self.slider_trigger_delay = customtkinter.CTkSlider(row2, from_=0, to=150, command=self.delay_slider_callback)
+        self.slider_trigger_delay.grid(row=0, column=3, padx=6, pady=8, sticky="ew")
         self.slider_trigger_delay.set(self.trigger_delay)
-        self.label_trigger_delay_value = customtkinter.CTkLabel(self.triggerbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=str(int(self.trigger_delay)))
-        self.label_trigger_delay_value.grid(row=2, column=2, padx=5, pady=15)
+        self.label_trigger_delay_value = customtkinter.CTkLabel(row2, width=45, font=customtkinter.CTkFont(size=12), text=f"{int(self.trigger_delay)}ms")
+        self.label_trigger_delay_value.grid(row=0, column=4, padx=6, pady=8)
+
+        # Row 3: Spray / Burst Customization Card
+        self.trigger_spray_card = customtkinter.CTkFrame(self.triggerbot_frame, fg_color="#18181b", corner_radius=8)
+        self.trigger_spray_card.pack(fill="x", padx=10, pady=4)
+        self.trigger_spray_card.grid_columnconfigure(2, weight=1)
+
+        # Burst Bullets Input
+        customtkinter.CTkLabel(self.trigger_spray_card, text="Burst Bullets:", font=customtkinter.CTkFont(size=12, weight="bold")).grid(row=0, column=0, padx=10, pady=6, sticky="w")
+        self.entry_trigger_burst_count = customtkinter.CTkEntry(self.trigger_spray_card, width=50, height=24, font=customtkinter.CTkFont(size=12))
+        self.entry_trigger_burst_count.grid(row=0, column=1, padx=4, pady=6)
+        self.entry_trigger_burst_count.insert(0, str(self.trigger_burst_count))
+        self.entry_trigger_burst_count.bind("<KeyRelease>", self._on_trigger_burst_count_entry_change)
+
+        self.slider_trigger_burst_count = customtkinter.CTkSlider(self.trigger_spray_card, from_=1, to=8, number_of_steps=7, command=self._on_trigger_burst_count_slider_change)
+        self.slider_trigger_burst_count.grid(row=0, column=2, padx=6, pady=6, sticky="ew")
+        self.slider_trigger_burst_count.set(self.trigger_burst_count)
+
+        # Bullet Interval Delay (ms) Input
+        customtkinter.CTkLabel(self.trigger_spray_card, text="Bullet Interval (ms):", font=customtkinter.CTkFont(size=12, weight="bold")).grid(row=1, column=0, padx=10, pady=6, sticky="w")
+        self.entry_trigger_burst_delay = customtkinter.CTkEntry(self.trigger_spray_card, width=50, height=24, font=customtkinter.CTkFont(size=12))
+        self.entry_trigger_burst_delay.grid(row=1, column=1, padx=4, pady=6)
+        self.entry_trigger_burst_delay.insert(0, str(self.trigger_burst_delay))
+        self.entry_trigger_burst_delay.bind("<KeyRelease>", self._on_trigger_burst_delay_entry_change)
+
+        self.slider_trigger_burst_delay = customtkinter.CTkSlider(self.trigger_spray_card, from_=40, to=200, command=self._on_trigger_burst_delay_slider_change)
+        self.slider_trigger_burst_delay.grid(row=1, column=2, padx=6, pady=6, sticky="ew")
+        self.slider_trigger_burst_delay.set(self.trigger_burst_delay)
+
+        # Recovery Cooldown (ms) Input
+        customtkinter.CTkLabel(self.trigger_spray_card, text="Shot Cooldown (ms):", font=customtkinter.CTkFont(size=12, weight="bold")).grid(row=2, column=0, padx=10, pady=6, sticky="w")
+        self.entry_trigger_cooldown = customtkinter.CTkEntry(self.trigger_spray_card, width=50, height=24, font=customtkinter.CTkFont(size=12))
+        self.entry_trigger_cooldown.grid(row=2, column=1, padx=4, pady=6)
+        self.entry_trigger_cooldown.insert(0, str(self.trigger_cooldown))
+        self.entry_trigger_cooldown.bind("<KeyRelease>", self._on_trigger_cooldown_entry_change)
+
+        self.slider_trigger_cooldown = customtkinter.CTkSlider(self.trigger_spray_card, from_=60, to=500, command=self._on_trigger_cooldown_slider_change)
+        self.slider_trigger_cooldown.grid(row=2, column=2, padx=6, pady=6, sticky="ew")
+        self.slider_trigger_cooldown.set(self.trigger_cooldown)
+
+    def _on_trigger_fire_mode_change(self, mode):
+        self.trigger_fire_mode = str(mode)
+        if self.colorbot:
+            self.colorbot.trigger_fire_mode = self.trigger_fire_mode
+
+    def _on_trigger_burst_count_slider_change(self, val):
+        self.trigger_burst_count = int(val)
+        self.entry_trigger_burst_count.delete(0, 'end')
+        self.entry_trigger_burst_count.insert(0, str(self.trigger_burst_count))
+        if self.colorbot:
+            self.colorbot.trigger_burst_count = self.trigger_burst_count
+
+    def _on_trigger_burst_count_entry_change(self, event=None):
+        try:
+            val = int(self.entry_trigger_burst_count.get())
+            self.trigger_burst_count = max(1, min(10, val))
+            self.slider_trigger_burst_count.set(self.trigger_burst_count)
+            if self.colorbot:
+                self.colorbot.trigger_burst_count = self.trigger_burst_count
+        except Exception:
+            pass
+
+    def _on_trigger_burst_delay_slider_change(self, val):
+        self.trigger_burst_delay = int(val)
+        self.entry_trigger_burst_delay.delete(0, 'end')
+        self.entry_trigger_burst_delay.insert(0, str(self.trigger_burst_delay))
+        if self.colorbot:
+            self.colorbot.trigger_burst_delay = self.trigger_burst_delay / 1000.0
+
+    def _on_trigger_burst_delay_entry_change(self, event=None):
+        try:
+            val = int(self.entry_trigger_burst_delay.get())
+            self.trigger_burst_delay = max(10, min(500, val))
+            self.slider_trigger_burst_delay.set(self.trigger_burst_delay)
+            if self.colorbot:
+                self.colorbot.trigger_burst_delay = self.trigger_burst_delay / 1000.0
+        except Exception:
+            pass
+
+    def _on_trigger_cooldown_slider_change(self, val):
+        self.trigger_cooldown = int(val)
+        self.entry_trigger_cooldown.delete(0, 'end')
+        self.entry_trigger_cooldown.insert(0, str(self.trigger_cooldown))
+        if self.colorbot:
+            self.colorbot.trigger_cooldown = self.trigger_cooldown / 1000.0
+
+    def _on_trigger_cooldown_entry_change(self, event=None):
+        try:
+            val = int(self.entry_trigger_cooldown.get())
+            self.trigger_cooldown = max(20, min(1000, val))
+            self.slider_trigger_cooldown.set(self.trigger_cooldown)
+            if self.colorbot:
+                self.colorbot.trigger_cooldown = self.trigger_cooldown / 1000.0
+        except Exception:
+            pass
 
     def _setup_preview_page(self):
         # Top toolbar
@@ -957,6 +1068,10 @@ class App(customtkinter.CTk):
                     smoothing=self.smoothing,
                     head_offset=self.head_offset,
                     trigger_delay=self.trigger_delay,
+                    trigger_fire_mode=self.trigger_fire_mode,
+                    trigger_burst_count=self.trigger_burst_count,
+                    trigger_burst_delay=self.trigger_burst_delay,
+                    trigger_cooldown=self.trigger_cooldown,
                     anti_shake_enabled=self.anti_shake_enabled,
                     deadzone=self.deadzone,
                     rcs_enabled=self.rcs_enabled,
@@ -991,6 +1106,10 @@ class App(customtkinter.CTk):
                 self.colorbot.smoothing = self.smoothing
                 self.colorbot.head_offset = self.head_offset
                 self.colorbot.trigger_delay = self.trigger_delay / 1000.0
+                self.colorbot.trigger_fire_mode = self.trigger_fire_mode
+                self.colorbot.trigger_burst_count = self.trigger_burst_count
+                self.colorbot.trigger_burst_delay = self.trigger_burst_delay / 1000.0
+                self.colorbot.trigger_cooldown = self.trigger_cooldown / 1000.0
                 self.colorbot.anti_shake_enabled = self.anti_shake_enabled
                 self.colorbot.deadzone = self.deadzone
                 self.colorbot.rcs_enabled = self.rcs_enabled
@@ -1454,6 +1573,10 @@ class App(customtkinter.CTk):
             "TRIGGER_MODE": self.combobox_trigger_mode.get(),
             "TRIGGER_ENABLED": self.trigger_enabled,
             "TRIGGER_DELAY": int(self.trigger_delay),
+            "TRIGGER_FIRE_MODE": self.combobox_trigger_fire_mode.get() if hasattr(self, 'combobox_trigger_fire_mode') else self.trigger_fire_mode,
+            "TRIGGER_BURST_COUNT": self.trigger_burst_count,
+            "TRIGGER_BURST_DELAY": self.trigger_burst_delay,
+            "TRIGGER_COOLDOWN": self.trigger_cooldown,
             "FOV": int(self.fov),
             "RESOLUTION": [res[0].strip(), res[1].strip()],
             "ENEMY_COLOR": self.shared_color,

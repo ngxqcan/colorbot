@@ -40,7 +40,8 @@ class Colorbot:
                  magnet_mode="Burst", burst_count=2, burst_delay=95, burst_cooldown=240, tap_cooldown=180,
                  magnet_target="Head", magnet_fov=45, magnet_smoothing=0.20,
                  sensitivity=0.35, smoothing=0.18, head_offset=7, trigger_delay=20,
-                 anti_shake_enabled=True, deadzone=1.0,
+                 trigger_fire_mode="Tap", trigger_burst_count=3, trigger_burst_delay=90, trigger_cooldown=220,
+                 anti_shake_enabled=True, deadzone=1.2,
                  rcs_enabled=True, rcs_pitch=2.5, rcs_yaw=0.0, rcs_start_delay_ms=100,
                  kmnet_ip="192.168.2.188", kmnet_port=16896, kmnet_uuid="46405c53",
                  capture_method="auto", mouse_method="auto"):
@@ -62,8 +63,14 @@ class Colorbot:
         self.smoothing = max(0.01, min(1.0, float(smoothing)))
         self.head_offset = int(head_offset)
         self.trigger_delay = max(0, int(trigger_delay)) / 1000.0  # seconds
+
+        # Triggerbot Spray & Burst parameters
+        self.trigger_fire_mode = str(trigger_fire_mode)  # "Tap", "Burst", "Continuous"
+        self.trigger_burst_count = max(1, int(trigger_burst_count))
+        self.trigger_burst_delay = max(10, int(trigger_burst_delay)) / 1000.0
+        self.trigger_cooldown = max(50, int(trigger_cooldown)) / 1000.0
         
-        # Anti-Shake & Micro-Deadzone
+        # Anti-Shake & Micro-Deadzone (Zero-Jitter Aim Hold)
         self.anti_shake_enabled = bool(anti_shake_enabled)
         self.deadzone = max(0.5, float(deadzone))
 
@@ -73,8 +80,8 @@ class Colorbot:
         self.rcs_yaw = float(rcs_yaw)
         self.rcs_start_delay_ms = float(rcs_start_delay_ms)
         
-        # Dedicated Magnet parameters
-        self.magnet_mode = magnet_mode  # "Burst", "Tap", "Continuous"
+        # Dedicated Magnet parameters (Aim Tracking + Spray)
+        self.magnet_mode = magnet_mode  # "Burst", "Continuous", "Tap"
         self.burst_count = max(1, int(burst_count))
         self.burst_delay = max(10, int(burst_delay)) / 1000.0  # seconds per bullet in burst
         self.burst_cooldown = max(50, int(burst_cooldown)) / 1000.0  # recovery between bursts
@@ -95,17 +102,16 @@ class Colorbot:
         self.locked_target_pos = None
         self.locked_target_time = 0.0
 
-        # Moving Shoot: Velocity Tracking & Target Lead Predictor
-        self.target_vel_x = 0.0
-        self.target_vel_y = 0.0
-        self.last_target_time = 0.0
-        self.last_raw_target = None
-
-        # Spray / Burst & Recoil Compensation States
+        # Spray / Burst & Recoil Compensation States (Magnet & Trigger)
         self.is_burst_spraying = False
         self.burst_spray_start_time = 0.0
         self.burst_spray_end_time = 0.0
         self.last_burst_end_time = 0.0
+
+        self.is_trigger_spraying = False
+        self.trigger_spray_start_time = 0.0
+        self.trigger_spray_end_time = 0.0
+        self.last_trigger_burst_end_time = 0.0
         self.last_trigger_time = 0.0
         self.last_tap_time = 0.0
 
@@ -250,9 +256,8 @@ class Colorbot:
     def _calculate_target_point(self, x, y, w, h, gz_center, active_bone_setting):
         """
         Calculates exact bone points (Head, Neck, Shoulder, Body) inside the character model,
-        and applies dynamic velocity lead prediction & continuous sigmoid stabilization for Moving Shoot.
+        and applies zero-jitter multi-stage EMA spatial stabilization.
         """
-        now = time.time()
         center_x = x + w // 2
         
         # 1. Head Bone
@@ -302,39 +307,25 @@ class Colorbot:
             raw_cX, raw_target_y = head_pt
             active_name = "Head"
 
-        # Moving Shoot: Dynamic Velocity & Motion Lead Calculation
-        lead_x = 0.0
-        lead_y = 0.0
-        if self.last_raw_target is not None and self.last_target_time > 0:
-            dt = max(0.001, min(0.08, now - self.last_target_time))
-            raw_vx = (raw_cX - self.last_raw_target[0]) / dt
-            raw_vy = (raw_target_y - self.last_raw_target[1]) / dt
-            
-            # Smooth velocity EMA filter
-            self.target_vel_x = 0.60 * self.target_vel_x + 0.40 * raw_vx
-            self.target_vel_y = 0.60 * self.target_vel_y + 0.40 * raw_vy
-            
-            # Predictive lead compensation for frame/capture latency (~16ms)
-            lead_x = self.target_vel_x * 0.016
-            lead_y = self.target_vel_y * 0.016
-
-        self.last_raw_target = (raw_cX, raw_target_y)
-        self.last_target_time = now
-
-        target_with_lead_x = raw_cX + lead_x
-        target_with_lead_y = raw_target_y + lead_y
-
-        # Continuous Sigmoid Anti-Shake filter (prevents micro-jitter and motion stutter)
+        # Multi-stage Anti-Shake coordinate stabilization filter (prevents micro-jitter while holding aim key)
         if self.anti_shake_enabled and self.last_filtered_target is not None:
             prev_x, prev_y = self.last_filtered_target
-            delta_dist = np.hypot(target_with_lead_x - prev_x, target_with_lead_y - prev_y)
-            # Continuous Sigmoidal blending (rock-solid when still, zero-lag tracking when running)
-            alpha = 0.22 + 0.78 / (1.0 + np.exp(-(delta_dist - 5.5) / 2.0))
-            filtered_x = prev_x * (1.0 - alpha) + float(target_with_lead_x) * alpha
-            filtered_y = prev_y * (1.0 - alpha) + float(target_with_lead_y) * alpha
+            delta_dist = np.hypot(raw_cX - prev_x, raw_target_y - prev_y)
+            
+            # If shift is micro-noise (< 2.0px), lock coordinates tightly (85% retention)
+            if delta_dist < 2.0:
+                filtered_x = 0.85 * prev_x + 0.15 * float(raw_cX)
+                filtered_y = 0.85 * prev_y + 0.15 * float(raw_target_y)
+            elif delta_dist < 8.0:
+                alpha = (delta_dist - 2.0) / 6.0 * 0.50 + 0.25  # 0.25 -> 0.75 smooth ease
+                filtered_x = (1.0 - alpha) * prev_x + alpha * float(raw_cX)
+                filtered_y = (1.0 - alpha) * prev_y + alpha * float(raw_target_y)
+            else:
+                filtered_x = float(raw_cX)
+                filtered_y = float(raw_target_y)
         else:
-            filtered_x = float(target_with_lead_x)
-            filtered_y = float(target_with_lead_y)
+            filtered_x = float(raw_cX)
+            filtered_y = float(raw_target_y)
 
         self.last_filtered_target = (filtered_x, filtered_y)
         cX = int(round(filtered_x))
@@ -343,20 +334,17 @@ class Colorbot:
 
     def _calculate_aim_step(self, x_diff, y_diff, dist, smooth_val):
         """
-        Ultimate Pro Aim Calculation for Moving Shoot:
-        - Exact Valorant Sens to Pixel Ratio: 1.07437623 * (Sens ^ -0.9936827126).
-        - Soft Hermite Deadzone: Smooth ease-in, zero shaking and zero boundary stutter.
-        - Dynamic Velocity Clamping with Motion Feedforward.
+        Rock-Solid Zero-Jitter Aim Calculation:
+        - True Valorant Sens to Pixel Ratio.
+        - Strict Deadzone Cutoff with Cubic Deceleration to eliminate micro-shaking.
+        - Velocity Clamping to prevent overshoot resonance.
         """
-        if dist <= 0.4:
+        dz = max(0.6, self.deadzone)
+        # Strict Deadzone Cutoff: when crosshair is on target, ZERO movement
+        if dist <= dz:
+            self.acc_x = 0.0
+            self.acc_y = 0.0
             return 0.0, 0.0
-
-        # Soft Deadzone curve: smooth ease-in from 0 to 1 without hard cutoffs
-        if dist < self.deadzone:
-            t = dist / max(0.5, self.deadzone)
-            dz_mult = t * t * (3.0 - 2.0 * t)
-        else:
-            dz_mult = 1.0
 
         sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
         target_move_x = x_diff * sens_scale
@@ -364,24 +352,29 @@ class Colorbot:
 
         smooth = max(0.02, min(1.0, smooth_val))
 
-        # Adaptive Distance Multiplier:
-        if dist < 5.0:
-            ease = max(0.20, (dist / 5.0) ** 1.20)
-            adaptive_smooth = smooth * ease
-        elif dist < 22.0:
+        # Soft Hermite Ease-In above Deadzone
+        if dist < dz + 5.0:
+            t = (dist - dz) / 5.0
+            dz_factor = t * t * (3.0 - 2.0 * t)
+        else:
+            dz_factor = 1.0
+
+        # Distance scaling for human glide
+        if dist < 6.0:
+            adaptive_smooth = smooth * max(0.18, (dist / 6.0) ** 1.3)
+        elif dist < 25.0:
             adaptive_smooth = smooth * 1.0
         else:
             adaptive_smooth = min(1.0, smooth * 1.15)
 
-        step_x = target_move_x * adaptive_smooth * dz_mult
-        step_y = target_move_y * adaptive_smooth * dz_mult
+        step_x = target_move_x * adaptive_smooth * dz_factor
+        step_y = target_move_y * adaptive_smooth * dz_factor
 
-        # Dynamic Velocity Clamping per tick (allows fast tracking when player is moving shoot)
-        target_speed = np.hypot(self.target_vel_x, self.target_vel_y)
-        max_vel = max(2.8, (dist * 0.42 + target_speed * 0.02) * (smooth + 0.40))
+        # Strict velocity clamping per tick: never allow more than 38% of distance per frame
+        max_step = max(1.2, dist * 0.38)
         step_len = np.hypot(step_x, step_y)
-        if step_len > max_vel:
-            scale = max_vel / step_len
+        if step_len > max_step:
+            scale = max_step / step_len
             step_x *= scale
             step_y *= scale
 
@@ -391,12 +384,18 @@ class Colorbot:
         t_start = time.perf_counter()
         now = time.time()
         
-        # 1. Manage Active Spray / Burst Duration (Hold Mouse Down)
+        # 1. Manage Active Spray / Burst Durations (Hold Mouse Down)
         if self.is_burst_spraying:
             if now >= self.burst_spray_end_time:
                 self.mouse.mouse_up("left")
                 self.is_burst_spraying = False
                 self.last_burst_end_time = now
+
+        if self.is_trigger_spraying:
+            if now >= self.trigger_spray_end_time:
+                self.mouse.mouse_up("left")
+                self.is_trigger_spraying = False
+                self.last_trigger_burst_end_time = now
 
         # Screen capture
         screen, frame_id = self.grabber.get_screen_with_id()
@@ -428,6 +427,9 @@ class Colorbot:
             if self.is_burst_spraying:
                 self.mouse.mouse_up("left")
                 self.is_burst_spraying = False
+            if self.is_trigger_spraying:
+                self.mouse.mouse_up("left")
+                self.is_trigger_spraying = False
 
         if box_data is not None:
             x, y, w, h = box_data
@@ -435,27 +437,20 @@ class Colorbot:
             active_bone_req = self.magnet_target if magnet_is_active else self.aim_target
             cX, target_y, bones_dict, active_bone_name = self._calculate_target_point(x, y, w, h, gz_center, active_bone_req)
             
-            # Moving Shoot: Recoil Curve during Burst / Spray
-            # In Valorant:
-            # Bullet 1 (0ms - 90ms): Exact First-Bullet Accuracy -> Pinpoint on Head/Neck
-            # Bullet 2 (90ms - 180ms): Recoil climbs slightly -> Pull down smoothly by rcs_pitch * 0.75
-            # Bullet 3 (180ms - 270ms): Recoil reaches burst peak -> Pull down smoothly by rcs_pitch * 1.6
-            # Bullet 4+ (Continuous Spray): Lock onto upper chest with sinusoidal yaw stabilization
-            if self.rcs_enabled and self.is_burst_spraying:
-                spray_elapsed_ms = (now - self.burst_spray_start_time) * 1000.0
+            # Dynamic Recoil Compensation (RCS) during active spray (Magnet or Triggerbot):
+            is_actively_spraying = self.is_burst_spraying or self.is_trigger_spraying
+            if self.rcs_enabled and is_actively_spraying:
+                spray_start = self.burst_spray_start_time if self.is_burst_spraying else self.trigger_spray_start_time
+                spray_elapsed_ms = (now - spray_start) * 1000.0
                 if spray_elapsed_ms >= self.rcs_start_delay_ms:
                     spray_t = (spray_elapsed_ms - self.rcs_start_delay_ms) / 1000.0
                     
-                    # Sigmoidal smooth progressive pull-down
-                    burst_duration = max(0.15, self.burst_count * self.burst_delay)
-                    burst_progress = min(1.0, spray_t / burst_duration)
-                    recoil_scale = burst_progress * burst_progress * (3.0 - 2.0 * burst_progress)
-                    
-                    max_recoil_offset = min(int(h * 0.38), int(self.rcs_pitch * 3.8))
-                    recoil_pull_y = recoil_scale * max_recoil_offset
+                    # Progressive vertical pull-down bounded within the target torso height
+                    max_recoil_offset = min(int(h * 0.40), int(self.rcs_pitch * 3.8))
+                    recoil_pull_y = min(max_recoil_offset, self.rcs_pitch * min(4.0, spray_t * 6.5))
                     target_y += int(round(recoil_pull_y))
 
-                    # Subtle horizontal counter-sway for moving recoil stability
+                    # Subtle horizontal counter-sway
                     if self.rcs_yaw > 0.01:
                         yaw_sway = math.sin(spray_t * 12.0) * self.rcs_yaw * min(1.0, spray_t * 2.5)
                         cX += int(round(yaw_sway))
@@ -475,7 +470,8 @@ class Colorbot:
                 "bones": bones_dict
             }
 
-            # 2. Check Aim Control
+            # 2. Check Aim Control (Aim Tracking)
+            # Magnet is Spray + Aim: when magnet key is held, aim tracking is always active!
             should_aim = False
             aim_smooth_val = self.smoothing
             if magnet_is_active:
@@ -489,7 +485,7 @@ class Colorbot:
                 elif self.aim_mode == "Always":
                     should_aim = True
 
-            # 3. Check Standard Triggerbot Control
+            # 3. Check Triggerbot Control
             should_trigger = False
             if self.trigger_enabled:
                 if self.trigger_mode == "Hold":
@@ -503,8 +499,8 @@ class Colorbot:
             if should_aim and is_new_frame:
                 step_x, step_y = self._calculate_aim_step(x_diff, y_diff, dist, aim_smooth_val)
                 
-                self.acc_x = max(-2.0, min(2.0, self.acc_x + step_x))
-                self.acc_y = max(-2.0, min(2.0, self.acc_y + step_y))
+                self.acc_x = max(-1.5, min(1.5, self.acc_x + step_x))
+                self.acc_y = max(-1.5, min(1.5, self.acc_y + step_y))
                 
                 dx = int(round(self.acc_x))
                 dy = int(round(self.acc_y))
@@ -515,11 +511,12 @@ class Colorbot:
                     self.mouse.move(dx, dy)
                     aiming_this_tick = True
 
-            # 4. Magnet Firing Execution with Dynamic Velocity-Aware Hitbox Window
-            hitbox_w = max(5, int(w * 0.42) + int(abs(self.target_vel_x) * 0.015))
-            hitbox_h = max(6, int(h * 0.35))
+            # 4. Target Hitbox Detection for Firing
+            hitbox_w = max(4, int(w * 0.45))
+            hitbox_h = max(5, int(h * 0.38))
             is_on_target = (abs(cX - gz_center) <= hitbox_w and abs(target_y - gz_center) <= hitbox_h)
 
+            # 4a. Magnet Firing Execution (Spray + Aim)
             if magnet_is_active:
                 mode_str = self.magnet_mode.lower() if self.magnet_mode else "burst"
                 
@@ -544,6 +541,7 @@ class Colorbot:
                     elif not is_on_target and self.is_burst_spraying:
                         self.mouse.mouse_up("left")
                         self.is_burst_spraying = False
+                        self.last_burst_end_time = now
                     triggering_this_tick = self.is_burst_spraying
 
                 else: # "tap" mode
@@ -555,19 +553,51 @@ class Colorbot:
                             self.last_tap_time = time.time()
                             triggering_this_tick = True
 
-            # 5. Standard Triggerbot Execution
-            elif should_trigger and is_on_target:
-                if now - self.last_trigger_time >= (self.trigger_delay + 0.12):
-                    if self.trigger_delay > 0:
-                        time.sleep(self.trigger_delay)
-                    self.mouse.click("left")
-                    self.last_trigger_time = time.time()
-                    triggering_this_tick = True
+            # 4b. Triggerbot Execution (Configurable: Tap / Burst / Continuous Spray)
+            elif should_trigger:
+                trig_fire = getattr(self, 'trigger_fire_mode', 'Tap').lower()
+                
+                if is_on_target:
+                    if "burst" in trig_fire:
+                        if not self.is_trigger_spraying:
+                            if now - self.last_trigger_burst_end_time >= (self.trigger_delay + self.trigger_cooldown):
+                                if self.trigger_delay > 0:
+                                    time.sleep(self.trigger_delay)
+                                burst_dur = max(0.06, self.trigger_burst_count * self.trigger_burst_delay)
+                                self.mouse.mouse_down("left")
+                                self.is_trigger_spraying = True
+                                self.trigger_spray_start_time = time.time()
+                                self.trigger_spray_end_time = self.trigger_spray_start_time + burst_dur
+                                triggering_this_tick = True
+                    elif "continuous" in trig_fire or "spray" in trig_fire:
+                        if not self.is_trigger_spraying:
+                            if self.trigger_delay > 0:
+                                time.sleep(self.trigger_delay)
+                            self.mouse.mouse_down("left")
+                            self.is_trigger_spraying = True
+                            self.trigger_spray_start_time = time.time()
+                        triggering_this_tick = True
+                    else: # "tap"
+                        if not self.is_trigger_spraying:
+                            if now - self.last_trigger_time >= (self.trigger_delay + self.trigger_cooldown):
+                                if self.trigger_delay > 0:
+                                    time.sleep(self.trigger_delay)
+                                self.mouse.click("left", delay=0.015)
+                                self.last_trigger_time = time.time()
+                                triggering_this_tick = True
+                else:
+                    if self.is_trigger_spraying and ("continuous" in trig_fire or "spray" in trig_fire):
+                        self.mouse.mouse_up("left")
+                        self.is_trigger_spraying = False
+                        self.last_trigger_burst_end_time = now
         else:
             self.last_filtered_target = None
-            if self.is_burst_spraying and "continuous" in self.magnet_mode.lower():
+            if self.is_burst_spraying and ("continuous" in self.magnet_mode.lower() or "spray" in self.magnet_mode.lower()):
                 self.mouse.mouse_up("left")
                 self.is_burst_spraying = False
+            if self.is_trigger_spraying and ("continuous" in getattr(self, 'trigger_fire_mode', 'tap').lower() or "spray" in getattr(self, 'trigger_fire_mode', 'tap').lower()):
+                self.mouse.mouse_up("left")
+                self.is_trigger_spraying = False
 
         t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
         
