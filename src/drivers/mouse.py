@@ -16,13 +16,19 @@ MOUSEEVENTF_MIDDLEUP = 0x0040
 class PicoMouse:
     """
     Unified Mouse Driver supporting:
-    1. 'logitech' - Logitech G HUB / LGS signed driver (1-PC kernel mouse emulation, bypasses Vanguard user-mode blocks).
-    2. 'makcu'    - Makcu / Pico USB hardware device for 2-PC or hardware-spoofed 1-PC setup.
-    3. 'win32'    - Direct Windows API (mouse_event / ctypes) for standard desktop apps.
-    4. 'auto'     - Tries Makcu first -> Logitech second -> falls back to Win32.
+    1. 'kmnet'    - Kmbox NET Hardware device (Network hardware mouse, 100% undetected).
+    2. 'logitech' - Logitech G HUB / LGS signed driver (1-PC kernel mouse emulation, bypasses Vanguard user-mode blocks).
+    3. 'makcu'    - Makcu / Pico USB hardware device for 2-PC or hardware-spoofed 1-PC setup.
+    4. 'win32'    - Direct Windows API (mouse_event / ctypes) for standard desktop apps.
+    5. 'auto'     - Tries Kmbox NET -> Makcu -> Logitech -> falls back to Win32.
     """
-    def __init__(self, method="auto"):
+    def __init__(self, method="auto", kmnet_ip="192.168.2.188", kmnet_port=16896, kmnet_uuid="46405c53"):
         self.method = method.lower() if method else "auto"
+        self.kmnet_ip = str(kmnet_ip)
+        self.kmnet_port = int(kmnet_port) if kmnet_port else 16896
+        self.kmnet_uuid = str(kmnet_uuid)
+        
+        self.kmnet_driver = None
         self.makcu_controller = None
         self.logitech_driver = None
         self.active_driver = "win32"
@@ -32,17 +38,23 @@ class PicoMouse:
         self._init_driver()
 
     def _init_driver(self):
-        # 1. Try Makcu Hardware Device
-        if self.method in ("makcu", "auto"):
+        # 1. Try Kmbox NET Hardware
+        if self.method in ("kmnet", "auto"):
             try:
-                from makcu import create_controller
-                self.makcu_controller = create_controller(debug=False, auto_reconnect=True)
-                if not self.makcu_controller.is_connected():
-                    self.makcu_controller.connect()
-                if self.makcu_controller.is_connected():
-                    self.active_driver = "makcu"
-                    print("[Mouse] Makcu hardware controller connected successfully.")
+                module_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "module")
+                if os.path.isdir(module_dir) and module_dir not in sys.path:
+                    sys.path.insert(0, module_dir)
+                import kmNet
+                ret = kmNet.init(str(self.kmnet_ip), str(self.kmnet_port), str(self.kmnet_uuid))
+                if ret == 0 or ret is None:
+                    self.kmnet_driver = kmNet
+                    self.active_driver = "kmnet"
+                    print(f"[Mouse] Kmbox NET hardware connected to {self.kmnet_ip}:{self.kmnet_port}")
                     return
+            except Exception as e:
+                if self.method == "kmnet":
+                    print(f"[Warning] Kmbox NET connection failed: {e}. Falling back...")
+                self.kmnet_driver = None
             except Exception as e:
                 if self.method == "makcu":
                     print(f"[Warning] Makcu connection failed: {e}. Falling back...")
@@ -76,6 +88,15 @@ class PicoMouse:
         if dx == 0 and dy == 0:
             return
 
+        # Kmbox NET hardware
+        if self.active_driver == "kmnet" and self.kmnet_driver:
+            try:
+                self.kmnet_driver.move(dx, dy)
+                return
+            except Exception as e:
+                print(f"[Error] Kmbox NET move failed ({e}); switching to fallback.")
+                self.active_driver = "win32"
+
         # Makcu hardware
         if self.active_driver == "makcu" and self.makcu_controller:
             try:
@@ -104,6 +125,20 @@ class PicoMouse:
         """Holds down a mouse button (for burst spray and continuous fire)."""
         if button == "left":
             self.is_left_down = True
+
+        # Kmbox NET hardware
+        if self.active_driver == "kmnet" and self.kmnet_driver:
+            try:
+                if button == "left":
+                    self.kmnet_driver.left(1)
+                elif button == "right":
+                    self.kmnet_driver.right(1)
+                elif button == "middle":
+                    self.kmnet_driver.middle(1)
+                return
+            except Exception as e:
+                print(f"[Error] Kmbox NET press failed ({e}); switching to fallback.")
+                self.active_driver = "win32"
 
         # Makcu hardware
         if self.active_driver == "makcu" and self.makcu_controller:
@@ -135,6 +170,20 @@ class PicoMouse:
         """Releases a held mouse button."""
         if button == "left":
             self.is_left_down = False
+
+        # Kmbox NET hardware
+        if self.active_driver == "kmnet" and self.kmnet_driver:
+            try:
+                if button == "left":
+                    self.kmnet_driver.left(0)
+                elif button == "right":
+                    self.kmnet_driver.right(0)
+                elif button == "middle":
+                    self.kmnet_driver.middle(0)
+                return
+            except Exception as e:
+                print(f"[Error] Kmbox NET release failed ({e}); switching to fallback.")
+                self.active_driver = "win32"
 
         # Makcu hardware
         if self.active_driver == "makcu" and self.makcu_controller:

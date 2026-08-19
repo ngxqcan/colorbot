@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+!module/*.pyd
 *.db
 *.sqlite3
 venv/

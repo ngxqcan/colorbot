@@ -48,6 +48,16 @@ class App(customtkinter.CTk):
         self.smoothing = float(self.config_manager.get('SMOOTHING', 0.18))
         self.head_offset = int(self.config_manager.get('HEAD_OFFSET', 7))
 
+        # Anti-Shake & Micro-Deadzone
+        self.anti_shake_enabled = bool(self.config_manager.get('ANTI_SHAKE_ENABLED', True))
+        self.deadzone = float(self.config_manager.get('DEADZONE', 1.0))
+
+        # Recoil Control System (RCS)
+        self.rcs_enabled = bool(self.config_manager.get('RCS_ENABLED', True))
+        self.rcs_pitch = float(self.config_manager.get('RCS_PITCH', 2.5))
+        self.rcs_yaw = float(self.config_manager.get('RCS_YAW', 0.0))
+        self.rcs_start_delay_ms = int(self.config_manager.get('RCS_START_DELAY_MS', 100))
+
         # Dedicated Magnet variables
         self.magnet_enabled = bool(self.config_manager.get('MAGNET_ENABLED', False))
         self.magnet_key = self.config_manager.get('MAGNET_KEY', 'RMB')
@@ -66,17 +76,22 @@ class App(customtkinter.CTk):
         self.trigger_mode = self.config_manager.get('TRIGGER_MODE', 'Toggle')
         self.trigger_delay = float(self.config_manager.get('TRIGGER_DELAY', 30))
 
+        # Kmbox NET variables
+        self.kmnet_ip = str(self.config_manager.get('KMNET_IP', '192.168.2.188'))
+        self.kmnet_port = int(self.config_manager.get('KMNET_PORT', 16896))
+        self.kmnet_uuid = str(self.config_manager.get('KMNET_UUID', '46405c53'))
+
         # Misc variables
         self.resolution = self.config_manager.get('RESOLUTION', [1920, 1080])
         self.capture_method = self.config_manager.get('CAPTURE_METHOD', 'Auto')
         self.mouse_method = self.config_manager.get('MOUSE_METHOD', 'Auto')
         self.formatted_resolution = f"{self.resolution[0]}x{self.resolution[1]}"
 
-        # Preview variables (Configurable size: 360x360 default)
+        # Preview variables (500x500 Default)
         self.preview_enabled = True
         self.preview_mode = self.config_manager.get('PREVIEW_MODE', 'Camera + HUD')
-        self.preview_size_str = self.config_manager.get('PREVIEW_SIZE', '360x360')
-        self.preview_dim = 360
+        self.preview_size_str = self.config_manager.get('PREVIEW_SIZE', '500x500')
+        self.preview_dim = 500
 
         self.is_recording_key = False
         self.colorbot = None
@@ -84,13 +99,13 @@ class App(customtkinter.CTk):
 
     def _setup_ui(self):
         self.resizable(False, False)
-        self.title("Valorant Colorbot - 1PC Pro Engine")
+        self.title("Valorant Colorbot 2PC / 1PC - Multi-Bone & RCS Engine")
         try:
             self.iconbitmap("icon.ico")
         except Exception:
             pass
 
-        self.geometry("980x560")
+        self.geometry("1060x640")
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         
@@ -249,8 +264,8 @@ class App(customtkinter.CTk):
 
         customtkinter.CTkLabel(row1, text="Target Bone:", font=customtkinter.CTkFont(size=12, weight="bold"), text_color="#38bdf8").pack(side="left", padx=(8, 3), pady=6)
         self.combobox_aim_target = customtkinter.CTkComboBox(
-            row1, values=["Head", "Neck", "Body", "Auto"], 
-            command=self.aim_target_callback, width=85, height=26,
+            row1, values=["Head", "Neck", "Shoulder", "Body", "Auto"], 
+            command=self.aim_target_callback, width=95, height=26,
             font=customtkinter.CTkFont(size=12)
         )
         self.combobox_aim_target.pack(side="left", padx=3, pady=6)
@@ -266,36 +281,69 @@ class App(customtkinter.CTk):
         self.combobox_aim_color.set(self.shared_color)
 
         # Row 2: FOV Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="FOV (Capture Box):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="FOV (Capture Box):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=4, sticky="w")
         self.slider_aim_FOV = customtkinter.CTkSlider(self.aimbot_frame, from_=20, to=250, command=self.FOV_slider_callback)
-        self.slider_aim_FOV.grid(row=2, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.slider_aim_FOV.grid(row=2, column=1, columnspan=2, padx=5, pady=4, sticky="ew")
         self.slider_aim_FOV.set(self.fov)
         self.label_aim_FOV_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=str(int(self.fov)))
-        self.label_aim_FOV_value.grid(row=2, column=3, padx=5, pady=5)
+        self.label_aim_FOV_value.grid(row=2, column=3, padx=5, pady=4)
 
         # Row 3: Sensitivity Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="In-Game Sensitivity:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="In-Game Sensitivity:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=3, column=0, padx=10, pady=4, sticky="w")
         self.slider_sens = customtkinter.CTkSlider(self.aimbot_frame, from_=0.05, to=1.5, command=self.sens_slider_callback)
-        self.slider_sens.grid(row=3, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.slider_sens.grid(row=3, column=1, columnspan=2, padx=5, pady=4, sticky="ew")
         self.slider_sens.set(self.sensitivity)
         self.label_sens_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=f"{self.sensitivity:.2f}")
-        self.label_sens_value.grid(row=3, column=3, padx=5, pady=5)
+        self.label_sens_value.grid(row=3, column=3, padx=5, pady=4)
 
         # Row 4: Smoothing Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="Smoothing Factor:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=4, column=0, padx=10, pady=5, sticky="w")
+        customtkinter.CTkLabel(self.aimbot_frame, text="Smoothing Factor:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=4, column=0, padx=10, pady=4, sticky="w")
         self.slider_smooth = customtkinter.CTkSlider(self.aimbot_frame, from_=0.05, to=1.0, command=self.smooth_slider_callback)
-        self.slider_smooth.grid(row=4, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.slider_smooth.grid(row=4, column=1, columnspan=2, padx=5, pady=4, sticky="ew")
         self.slider_smooth.set(self.smoothing)
         self.label_smooth_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=f"{self.smoothing:.2f}")
-        self.label_smooth_value.grid(row=4, column=3, padx=5, pady=5)
+        self.label_smooth_value.grid(row=4, column=3, padx=5, pady=4)
 
-        # Row 5: Head Offset Slider
-        customtkinter.CTkLabel(self.aimbot_frame, text="Head Y-Offset:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=5, column=0, padx=10, pady=5, sticky="w")
-        self.slider_head = customtkinter.CTkSlider(self.aimbot_frame, from_=0, to=25, command=self.head_slider_callback)
-        self.slider_head.grid(row=5, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
+        # Row 5: Head Offset & Anti-Shake & RCS Card
+        extra_card = customtkinter.CTkFrame(self.aimbot_frame, fg_color="#18181b", corner_radius=8)
+        extra_card.grid(row=5, column=0, columnspan=4, padx=10, pady=4, sticky="ew")
+        extra_card.grid_columnconfigure(1, weight=1)
+
+        customtkinter.CTkLabel(extra_card, text="Head Offset:", font=customtkinter.CTkFont(size=12, weight="bold")).grid(row=0, column=0, padx=8, pady=3, sticky="w")
+        self.slider_head = customtkinter.CTkSlider(extra_card, from_=0, to=25, command=self.head_slider_callback)
+        self.slider_head.grid(row=0, column=1, padx=5, pady=3, sticky="ew")
         self.slider_head.set(self.head_offset)
-        self.label_head_value = customtkinter.CTkLabel(self.aimbot_frame, width=50, font=customtkinter.CTkFont(size=13), text=str(int(self.head_offset)))
-        self.label_head_value.grid(row=5, column=3, padx=5, pady=5)
+        self.label_head_value = customtkinter.CTkLabel(extra_card, width=40, font=customtkinter.CTkFont(size=12), text=str(int(self.head_offset)))
+        self.label_head_value.grid(row=0, column=2, padx=5, pady=3)
+
+        self.switch_anti_shake = customtkinter.CTkSwitch(
+            extra_card, text="Anti-Shake (Zero Jitter)", font=customtkinter.CTkFont(size=12, weight="bold"),
+            command=self._on_anti_shake_toggle
+        )
+        self.switch_anti_shake.grid(row=1, column=0, padx=8, pady=3, sticky="w")
+        if self.anti_shake_enabled:
+            self.switch_anti_shake.select()
+
+        self.slider_deadzone = customtkinter.CTkSlider(extra_card, from_=0.5, to=4.0, command=self._on_deadzone_change)
+        self.slider_deadzone.grid(row=1, column=1, padx=5, pady=3, sticky="ew")
+        self.slider_deadzone.set(self.deadzone)
+        self.lbl_deadzone_val = customtkinter.CTkLabel(extra_card, width=40, font=customtkinter.CTkFont(size=12), text=f"DZ:{self.deadzone:.1f}")
+        self.lbl_deadzone_val.grid(row=1, column=2, padx=5, pady=3)
+
+        # RCS Controls inside card
+        self.switch_rcs = customtkinter.CTkSwitch(
+            extra_card, text="RCS Recoil Control", font=customtkinter.CTkFont(size=12, weight="bold"),
+            command=self._on_rcs_toggle
+        )
+        self.switch_rcs.grid(row=2, column=0, padx=8, pady=3, sticky="w")
+        if self.rcs_enabled:
+            self.switch_rcs.select()
+
+        self.slider_rcs_pitch = customtkinter.CTkSlider(extra_card, from_=0.0, to=8.0, command=self._on_rcs_pitch_change)
+        self.slider_rcs_pitch.grid(row=2, column=1, padx=5, pady=3, sticky="ew")
+        self.slider_rcs_pitch.set(self.rcs_pitch)
+        self.lbl_rcs_pitch_val = customtkinter.CTkLabel(extra_card, width=40, font=customtkinter.CTkFont(size=12), text=f"P:{self.rcs_pitch:.1f}")
+        self.lbl_rcs_pitch_val.grid(row=2, column=2, padx=5, pady=3)
 
     def _setup_magnet_page(self):
         """Dedicated Magnet Bot configuration page with Burst/Tap controls."""
@@ -568,7 +616,7 @@ class App(customtkinter.CTk):
 
         customtkinter.CTkLabel(toolbar, text="Size:", font=customtkinter.CTkFont(size=12, weight="bold")).pack(side="left", padx=(8, 3), pady=6)
         self.combobox_preview_size = customtkinter.CTkComboBox(
-            toolbar, values=["360x360", "400x400", "320x320", "256x256"], 
+            toolbar, values=["500x500", "400x400", "360x360", "320x320", "256x256"], 
             command=self.preview_size_callback, width=95, height=26,
             font=customtkinter.CTkFont(size=11)
         )
@@ -582,9 +630,9 @@ class App(customtkinter.CTk):
         self.slider_preview_fov.set(self.fov)
 
         self.btn_popout = customtkinter.CTkButton(
-            toolbar, text="↗ Popout", 
+            toolbar, text="↗ Popout 500x500", 
             command=self.toggle_popout_window,
-            width=80, height=26,
+            width=110, height=26,
             font=customtkinter.CTkFont(size=11, weight="bold"),
             fg_color="#059669", hover_color="#047857"
         )
@@ -601,7 +649,7 @@ class App(customtkinter.CTk):
 
         self.preview_label = customtkinter.CTkLabel(
             self.preview_box, 
-            text="[ Live HD Canvas Initializing... ]",
+            text=f"[ Live HD Canvas Initializing ({self.preview_dim}x{self.preview_dim})... ]",
             text_color="#71717a",
             font=customtkinter.CTkFont(size=13)
         )
@@ -653,32 +701,51 @@ class App(customtkinter.CTk):
 
     def _setup_misc_page(self):
         # Row 0: Resolution
-        customtkinter.CTkLabel(self.misc_frame, text="Screen Resolution:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        customtkinter.CTkLabel(self.misc_frame, text="Screen Resolution:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=0, column=0, padx=10, pady=6, sticky="w")
         self.resolution_input = customtkinter.CTkEntry(self.misc_frame, width=140, font=customtkinter.CTkFont(size=13))
-        self.resolution_input.grid(row=0, column=1, padx=10, pady=10, sticky="w")
+        self.resolution_input.grid(row=0, column=1, padx=10, pady=6, sticky="w")
         self.resolution_input.insert(0, self.formatted_resolution)
 
         # Row 1: Screen Capture Driver
-        customtkinter.CTkLabel(self.misc_frame, text="Capture Driver (1-PC):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        customtkinter.CTkLabel(self.misc_frame, text="Capture Driver:", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=1, column=0, padx=10, pady=6, sticky="w")
         self.combobox_capture = customtkinter.CTkComboBox(
             self.misc_frame, values=["Auto", "DXCam", "MSS", "GDI", "NDI"], 
             width=140, font=customtkinter.CTkFont(size=13)
         )
-        self.combobox_capture.grid(row=1, column=1, padx=10, pady=10, sticky="w")
+        self.combobox_capture.grid(row=1, column=1, padx=10, pady=6, sticky="w")
         self.combobox_capture.set(self.capture_method)
 
         # Row 2: Mouse Driver
-        customtkinter.CTkLabel(self.misc_frame, text="Mouse Driver (1-PC):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        customtkinter.CTkLabel(self.misc_frame, text="Mouse Driver (1PC / 2PC):", font=customtkinter.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=10, pady=6, sticky="w")
         self.combobox_mouse = customtkinter.CTkComboBox(
-            self.misc_frame, values=["Auto", "Logitech", "Makcu", "Win32"], 
+            self.misc_frame, values=["Auto", "Kmbox", "Logitech", "Makcu", "Win32"], 
             width=140, font=customtkinter.CTkFont(size=13)
         )
-        self.combobox_mouse.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        self.combobox_mouse.grid(row=2, column=1, padx=10, pady=6, sticky="w")
         self.combobox_mouse.set(self.mouse_method)
 
-        # Row 3: Buttons
+        # Kmbox NET Hardware Config Card
+        km_card = customtkinter.CTkLabelFrame(self.misc_frame, text="Kmbox NET Hardware Settings (2-PC / Network)", font=customtkinter.CTkFont(size=12, weight="bold"))
+        km_card.grid(row=3, column=0, columnspan=2, padx=10, pady=8, sticky="ew")
+
+        customtkinter.CTkLabel(km_card, text="IP:").grid(row=0, column=0, padx=8, pady=4, sticky="w")
+        self.entry_km_ip = customtkinter.CTkEntry(km_card, width=130)
+        self.entry_km_ip.grid(row=0, column=1, padx=6, pady=4)
+        self.entry_km_ip.insert(0, self.kmnet_ip)
+
+        customtkinter.CTkLabel(km_card, text="Port:").grid(row=0, column=2, padx=8, pady=4, sticky="w")
+        self.entry_km_port = customtkinter.CTkEntry(km_card, width=70)
+        self.entry_km_port.grid(row=0, column=3, padx=6, pady=4)
+        self.entry_km_port.insert(0, str(self.kmnet_port))
+
+        customtkinter.CTkLabel(km_card, text="UUID:").grid(row=1, column=0, padx=8, pady=4, sticky="w")
+        self.entry_km_uuid = customtkinter.CTkEntry(km_card, width=130)
+        self.entry_km_uuid.grid(row=1, column=1, padx=6, pady=4)
+        self.entry_km_uuid.insert(0, self.kmnet_uuid)
+
+        # Row 4: Buttons
         btn_frame = customtkinter.CTkFrame(self.misc_frame, fg_color="transparent")
-        btn_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=15)
+        btn_frame.grid(row=4, column=0, columnspan=2, padx=10, pady=12)
         customtkinter.CTkButton(btn_frame, text="Load Config", command=self.load_config, width=120, font=customtkinter.CTkFont(size=13)).pack(side="left", padx=10)
         customtkinter.CTkButton(btn_frame, text="Save Config", command=self.save_config, width=120, font=customtkinter.CTkFont(size=13)).pack(side="left", padx=10)
 
@@ -818,6 +885,30 @@ class App(customtkinter.CTk):
         if self.preview_enabled:
             self._ensure_engine_running()
 
+    def _on_anti_shake_toggle(self):
+        self.anti_shake_enabled = bool(self.switch_anti_shake.get())
+        if self.colorbot:
+            self.colorbot.anti_shake_enabled = self.anti_shake_enabled
+        self.save_config()
+
+    def _on_deadzone_change(self, val):
+        self.deadzone = float(val)
+        self.lbl_deadzone_val.configure(text=f"DZ:{self.deadzone:.1f}")
+        if self.colorbot:
+            self.colorbot.deadzone = self.deadzone
+
+    def _on_rcs_toggle(self):
+        self.rcs_enabled = bool(self.switch_rcs.get())
+        if self.colorbot:
+            self.colorbot.rcs_enabled = self.rcs_enabled
+        self.save_config()
+
+    def _on_rcs_pitch_change(self, val):
+        self.rcs_pitch = float(val)
+        self.lbl_rcs_pitch_val.configure(text=f"P:{self.rcs_pitch:.1f}")
+        if self.colorbot:
+            self.colorbot.rcs_pitch = self.rcs_pitch
+
     def _ensure_engine_running(self):
         """Starts the engine if any feature (aimbot, magnet, triggerbot, or preview) needs it."""
         should_run = self.aim_enabled or self.magnet_enabled or self.trigger_enabled or self.preview_enabled
@@ -832,6 +923,14 @@ class App(customtkinter.CTk):
                 cx, cy = w // 2, h // 2
                 grab_size = max(10, (int(self.fov) // 2) * 2)
                 
+                m_method = self.combobox_mouse.get()
+                if "kmbox" in m_method.lower():
+                    m_method = "kmnet"
+
+                km_ip = self.entry_km_ip.get() if hasattr(self, 'entry_km_ip') else self.kmnet_ip
+                km_port = int(self.entry_km_port.get() or 16896) if hasattr(self, 'entry_km_port') else self.kmnet_port
+                km_uuid = self.entry_km_uuid.get() if hasattr(self, 'entry_km_uuid') else self.kmnet_uuid
+
                 self.colorbot = Colorbot(
                     x=cx - grab_size // 2,
                     y=cy - grab_size // 2,
@@ -855,8 +954,17 @@ class App(customtkinter.CTk):
                     smoothing=self.smoothing,
                     head_offset=self.head_offset,
                     trigger_delay=self.trigger_delay,
+                    anti_shake_enabled=self.anti_shake_enabled,
+                    deadzone=self.deadzone,
+                    rcs_enabled=self.rcs_enabled,
+                    rcs_pitch=self.rcs_pitch,
+                    rcs_yaw=self.rcs_yaw,
+                    rcs_start_delay_ms=self.rcs_start_delay_ms,
+                    kmnet_ip=km_ip,
+                    kmnet_port=km_port,
+                    kmnet_uuid=km_uuid,
                     capture_method=self.combobox_capture.get(),
-                    mouse_method=self.combobox_mouse.get()
+                    mouse_method=m_method
                 )
                 self.colorbot.start()
                 self.status_label.configure(text="● Engine: Running", text_color="#22c55e")
@@ -880,6 +988,12 @@ class App(customtkinter.CTk):
                 self.colorbot.smoothing = self.smoothing
                 self.colorbot.head_offset = self.head_offset
                 self.colorbot.trigger_delay = self.trigger_delay / 1000.0
+                self.colorbot.anti_shake_enabled = self.anti_shake_enabled
+                self.colorbot.deadzone = self.deadzone
+                self.colorbot.rcs_enabled = self.rcs_enabled
+                self.colorbot.rcs_pitch = self.rcs_pitch
+                self.colorbot.rcs_yaw = self.rcs_yaw
+                self.colorbot.rcs_start_delay_ms = self.rcs_start_delay_ms
                 self.status_label.configure(text="● Engine: Running", text_color="#22c55e")
         elif self.colorbot:
             self.colorbot.close()
@@ -950,7 +1064,7 @@ class App(customtkinter.CTk):
                 if frame is not None and frame.size > 0:
                     rendered = self._render_hud(frame, mask, target, fps, latency_ms, is_aiming, gz)
                     
-                    dim = getattr(self, 'preview_dim', 360)
+                    dim = getattr(self, 'preview_dim', 500)
                     resized = cv2.resize(rendered, (dim, dim), interpolation=cv2.INTER_NEAREST)
                     rgb_img = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(rgb_img)
@@ -1032,15 +1146,41 @@ class App(customtkinter.CTk):
         cv2.circle(display, (cx, cy), fov_radius, (0, 255, 255), 1)
         cv2.rectangle(display, (0, 0), (gz_w - 1, gz_h - 1), (60, 60, 60), 1)
 
-        # Target Overlays
+        # Deadzone Circle
+        dz_rad = max(1, int(round(getattr(self, 'deadzone', 1.0))))
+        cv2.circle(display, (cx, cy), dz_rad, (180, 180, 180), 1)
+
+        # Target Overlays with Multi-Bone Visualization
         if target.get("found", False):
             bx, by, bw, bh = target["x"], target["y"], target["w"], target["h"]
             tcX, target_y = target["cX"], target["target_y"]
 
             box_color = (0, 255, 0) if not is_aiming else (0, 165, 255)
             cv2.rectangle(display, (bx, by), (bx + bw, by + bh), box_color, 1)
-            cv2.circle(display, (tcX, target_y), 3, (255, 255, 0), -1)
-            cv2.line(display, (cx, cy), (tcX, target_y), (255, 255, 0), 1)
+
+            # Draw 4 Bones
+            bones = target.get("bones")
+            if bones:
+                if "head" in bones:
+                    cv2.circle(display, bones["head"], 3, (0, 0, 255), -1)      # Red: Head
+                if "neck" in bones:
+                    cv2.circle(display, bones["neck"], 3, (0, 255, 255), -1)    # Yellow: Neck
+                if "shoulder_left" in bones:
+                    cv2.circle(display, bones["shoulder_left"], 3, (0, 165, 255), -1)
+                if "shoulder_right" in bones:
+                    cv2.circle(display, bones["shoulder_right"], 3, (0, 165, 255), -1)
+                if "shoulder_center" in bones:
+                    cv2.circle(display, bones["shoulder_center"], 2, (0, 165, 255), -1)
+                if "body" in bones:
+                    cv2.circle(display, bones["body"], 3, (255, 255, 0), -1)    # Blue: Body
+
+            # Active Target Bone Marker
+            cv2.drawMarker(display, (tcX, target_y), (0, 255, 0), cv2.MARKER_CROSS, 8, 2)
+            cv2.line(display, (cx, cy), (tcX, target_y), (0, 255, 0), 1)
+
+        # RCS Indicator
+        if self.rcs_enabled and getattr(self.colorbot, 'is_burst_spraying', False):
+            cv2.putText(display, "RCS: ACTIVE", (4, gz_h - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1, cv2.LINE_AA)
 
         # Watermark Text
         bone_tag = target.get("bone", self.aim_target).upper()[:4] if target.get("found", False) else self.aim_target.upper()[:4]
@@ -1054,12 +1194,12 @@ class App(customtkinter.CTk):
         """Opens or closes a standalone resizable floating preview window."""
         if self.popout_window is None or not self.popout_window.winfo_exists():
             self.popout_window = customtkinter.CTkToplevel(self)
-            self.popout_window.title("HUD Live Preview")
-            self.popout_window.geometry("390x410")
+            self.popout_window.title("HUD Live Preview 500x500")
+            self.popout_window.geometry("540x560")
             self.popout_window.attributes("-topmost", True)
             
             self.popout_label = customtkinter.CTkLabel(
-                self.popout_window, text="[ Floating HD HUD Stream ]",
+                self.popout_window, text="[ Floating HD HUD Stream 500x500 ]",
                 font=customtkinter.CTkFont(size=12)
             )
             self.popout_label.pack(expand=True, fill="both", padx=10, pady=10)
@@ -1226,6 +1366,24 @@ class App(customtkinter.CTk):
         self.label_smooth_value.configure(text=f"{self.smoothing:.2f}")
         self.slider_head.set(self.head_offset)
         self.label_head_value.configure(text=str(self.head_offset))
+
+        if hasattr(self, 'switch_anti_shake'):
+            if self.anti_shake_enabled:
+                self.switch_anti_shake.select()
+            else:
+                self.switch_anti_shake.deselect()
+        if hasattr(self, 'slider_deadzone'):
+            self.slider_deadzone.set(self.deadzone)
+            self.lbl_deadzone_val.configure(text=f"DZ:{self.deadzone:.1f}")
+
+        if hasattr(self, 'switch_rcs'):
+            if self.rcs_enabled:
+                self.switch_rcs.select()
+            else:
+                self.switch_rcs.deselect()
+        if hasattr(self, 'slider_rcs_pitch'):
+            self.slider_rcs_pitch.set(self.rcs_pitch)
+            self.lbl_rcs_pitch_val.configure(text=f"P:{self.rcs_pitch:.1f}")
         
         self.slider_magnet_fov.set(self.magnet_fov)
         self.lbl_magnet_fov_val.configure(text=str(int(self.magnet_fov)))
@@ -1254,10 +1412,25 @@ class App(customtkinter.CTk):
         self.preview_size_callback(self.preview_size_str)
         self.resolution_input.delete(0, 'end')
         self.resolution_input.insert(0, self.formatted_resolution)
+        
+        if hasattr(self, 'entry_km_ip'):
+            self.entry_km_ip.delete(0, 'end')
+            self.entry_km_ip.insert(0, self.kmnet_ip)
+        if hasattr(self, 'entry_km_port'):
+            self.entry_km_port.delete(0, 'end')
+            self.entry_km_port.insert(0, str(self.kmnet_port))
+        if hasattr(self, 'entry_km_uuid'):
+            self.entry_km_uuid.delete(0, 'end')
+            self.entry_km_uuid.insert(0, self.kmnet_uuid)
+
         self._ensure_engine_running()
 
     def save_config(self):
         res = self.resolution_input.get().split('x')
+        km_ip = self.entry_km_ip.get() if hasattr(self, 'entry_km_ip') else self.kmnet_ip
+        km_port = int(self.entry_km_port.get() or 16896) if hasattr(self, 'entry_km_port') else self.kmnet_port
+        km_uuid = self.entry_km_uuid.get() if hasattr(self, 'entry_km_uuid') else self.kmnet_uuid
+
         config = {
             "MASTER_TOGGLE_KEY": self.master_toggle_key,
             "AIM_KEY": self.aim_key,
@@ -1284,6 +1457,15 @@ class App(customtkinter.CTk):
             "SENSITIVITY": round(self.sensitivity, 2),
             "SMOOTHING": round(self.smoothing, 2),
             "HEAD_OFFSET": int(self.head_offset),
+            "ANTI_SHAKE_ENABLED": self.anti_shake_enabled,
+            "DEADZONE": round(self.deadzone, 2),
+            "RCS_ENABLED": self.rcs_enabled,
+            "RCS_PITCH": round(self.rcs_pitch, 2),
+            "RCS_YAW": round(self.rcs_yaw, 2),
+            "RCS_START_DELAY_MS": self.rcs_start_delay_ms,
+            "KMNET_IP": km_ip,
+            "KMNET_PORT": km_port,
+            "KMNET_UUID": km_uuid,
             "CAPTURE_METHOD": self.combobox_capture.get(),
             "MOUSE_METHOD": self.combobox_mouse.get(),
             "PREVIEW_MODE": self.combobox_preview_mode.get(),

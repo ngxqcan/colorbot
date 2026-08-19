@@ -39,6 +39,9 @@ class Colorbot:
                  magnet_mode="Burst", burst_count=2, burst_delay=95, burst_cooldown=240, tap_cooldown=180,
                  magnet_target="Head", magnet_fov=45, magnet_smoothing=0.20,
                  sensitivity=0.35, smoothing=0.18, head_offset=7, trigger_delay=20,
+                 anti_shake_enabled=True, deadzone=1.0,
+                 rcs_enabled=True, rcs_pitch=2.5, rcs_yaw=0.0, rcs_start_delay_ms=100,
+                 kmnet_ip="192.168.2.188", kmnet_port=16896, kmnet_uuid="46405c53",
                  capture_method="auto", mouse_method="auto"):
         self.x = int(x)
         self.y = int(y)
@@ -58,6 +61,16 @@ class Colorbot:
         self.smoothing = max(0.01, min(1.0, float(smoothing)))
         self.head_offset = int(head_offset)
         self.trigger_delay = max(0, int(trigger_delay)) / 1000.0  # seconds
+        
+        # Anti-Shake & Micro-Deadzone
+        self.anti_shake_enabled = bool(anti_shake_enabled)
+        self.deadzone = max(0.5, float(deadzone))
+
+        # Recoil Control System (RCS)
+        self.rcs_enabled = bool(rcs_enabled)
+        self.rcs_pitch = float(rcs_pitch)
+        self.rcs_yaw = float(rcs_yaw)
+        self.rcs_start_delay_ms = float(rcs_start_delay_ms)
         
         # Dedicated Magnet parameters
         self.magnet_mode = magnet_mode  # "Burst", "Tap", "Continuous"
@@ -106,7 +119,7 @@ class Colorbot:
             except Exception:
                 pass
 
-        self.mouse = PicoMouse(method=mouse_method)
+        self.mouse = PicoMouse(method=mouse_method, kmnet_ip=kmnet_ip, kmnet_port=kmnet_port, kmnet_uuid=kmnet_uuid)
         self.grabber = ScreenCapture(self.x, self.y, self.grabzone, method=capture_method)
         
         self.running = False
@@ -229,36 +242,68 @@ class Colorbot:
 
     def _calculate_target_point(self, x, y, w, h, gz_center, active_bone_setting):
         """
-        Calculates the TRUE center of the head/neck/body inside the character model,
-        not on the colored outline stroke.
+        Calculates exact bone points (Head, Neck, Shoulder, Body) inside the character model,
+        and applies the Anti-Shake EMA stabilization filter.
         """
-        raw_cX = x + w // 2
-        target_mode = active_bone_setting.lower() if active_bone_setting else "head"
+        center_x = x + w // 2
         
-        if "body" in target_mode or "chest" in target_mode:
-            raw_target_y = y + int(h * 0.48)
-        elif "neck" in target_mode:
-            raw_target_y = y + int(h * 0.25)
-        elif "auto" in target_mode:
-            head_y = y + min(self.head_offset, max(3, int(h * 0.14)))
-            neck_y = y + int(h * 0.25)
-            body_y = y + int(h * 0.48)
-            bones = [head_y, neck_y, body_y]
-            raw_target_y = min(bones, key=lambda by: abs(by - gz_center))
-        else: # "head" default
-            head_offset_clamped = min(self.head_offset, max(3, int(h * 0.18)))
-            raw_target_y = y + head_offset_clamped
+        # 1. Head Bone
+        head_off = min(self.head_offset, max(3, int(h * 0.15)))
+        head_pt = (center_x, y + head_off)
+        
+        # 2. Neck Bone
+        neck_off = max(head_off + 2, int(h * 0.25))
+        neck_pt = (center_x, y + neck_off)
+        
+        # 3. Shoulder Bones
+        shoulder_y = y + int(h * 0.32)
+        l_shoulder_pt = (x + max(1, int(w * 0.22)), shoulder_y)
+        r_shoulder_pt = (x + min(w - 2, int(w * 0.78)), shoulder_y)
+        c_shoulder_pt = (center_x, shoulder_y)
+        shoulders = [l_shoulder_pt, r_shoulder_pt, c_shoulder_pt]
+        closest_shoulder = min(shoulders, key=lambda p: np.hypot(p[0] - gz_center, p[1] - gz_center))
+        
+        # 4. Body / Chest Bone
+        body_y = y + int(h * 0.48)
+        body_pt = (center_x, body_y)
+        
+        bones_dict = {
+            "head": head_pt,
+            "neck": neck_pt,
+            "shoulder_left": l_shoulder_pt,
+            "shoulder_right": r_shoulder_pt,
+            "shoulder_center": c_shoulder_pt,
+            "shoulder": closest_shoulder,
+            "body": body_pt
+        }
 
-        # Target coordinate stabilization filter (prevents detection micro-jitter)
-        if self.last_filtered_target is not None:
+        target_mode = active_bone_setting.lower() if active_bone_setting else "head"
+        if "shoulder" in target_mode:
+            raw_cX, raw_target_y = closest_shoulder
+            active_name = "Shoulder"
+        elif "neck" in target_mode:
+            raw_cX, raw_target_y = neck_pt
+            active_name = "Neck"
+        elif "body" in target_mode or "chest" in target_mode:
+            raw_cX, raw_target_y = body_pt
+            active_name = "Body"
+        elif "auto" in target_mode:
+            candidates = [("Head", head_pt), ("Neck", neck_pt), ("Shoulder", closest_shoulder), ("Body", body_pt)]
+            active_name, (raw_cX, raw_target_y) = min(candidates, key=lambda item: np.hypot(item[1][0] - gz_center, item[1][1] - gz_center))
+        else:
+            raw_cX, raw_target_y = head_pt
+            active_name = "Head"
+
+        # Anti-Shake coordinate stabilization filter (prevents detection micro-jitter)
+        if self.anti_shake_enabled and self.last_filtered_target is not None:
             prev_x, prev_y = self.last_filtered_target
             delta_dist = np.hypot(raw_cX - prev_x, raw_target_y - prev_y)
             if delta_dist < 2.5:
-                cX = int(0.70 * prev_x + 0.30 * raw_cX)
-                target_y = int(0.70 * prev_y + 0.30 * raw_target_y)
-            elif delta_dist < 6.0:
-                cX = int(0.40 * prev_x + 0.60 * raw_cX)
-                target_y = int(0.40 * prev_y + 0.60 * raw_target_y)
+                cX = int(0.75 * prev_x + 0.25 * raw_cX)
+                target_y = int(0.75 * prev_y + 0.25 * raw_target_y)
+            elif delta_dist < 8.0:
+                cX = int(0.45 * prev_x + 0.55 * raw_cX)
+                target_y = int(0.45 * prev_y + 0.55 * raw_target_y)
             else:
                 cX = raw_cX
                 target_y = raw_target_y
@@ -267,16 +312,16 @@ class Colorbot:
             target_y = raw_target_y
 
         self.last_filtered_target = (cX, target_y)
-        return cX, target_y
+        return cX, target_y, bones_dict, active_name
 
     def _calculate_aim_step(self, x_diff, y_diff, dist, smooth_val):
         """
         Ultimate Pro Aim Calculation:
         - Exact Valorant Sens to Pixel Ratio: 1.07437623 * (Sens ^ -0.9936827126).
         - Adaptive Sigmoid Velocity Profile: Smooth acceleration & ease-out deceleration.
-        - Dynamic Micro-Deadzone (< 0.9px): Zero shaking.
+        - Micro-Deadzone: Zero shaking when crosshair is within target zone.
         """
-        if dist < 0.9:
+        if dist <= max(0.5, self.deadzone):
             return 0.0, 0.0
 
         sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
@@ -286,9 +331,6 @@ class Colorbot:
         smooth = max(0.02, min(1.0, smooth_val))
 
         # Adaptive Distance Multiplier:
-        # - Near target (< 6px): Ease out smoothly into center
-        # - Mid target (6 - 25px): Natural human glide
-        # - Far target (> 25px): Controlled flick
         if dist < 6.0:
             ease = max(0.18, (dist / 6.0) ** 1.25)
             adaptive_smooth = smooth * ease
@@ -300,7 +342,7 @@ class Colorbot:
         step_x = target_move_x * adaptive_smooth
         step_y = target_move_y * adaptive_smooth
 
-        # Adaptive Velocity Clamping per tick (Prevents violent whips & robotic flicks)
+        # Adaptive Velocity Clamping per tick
         max_vel = max(2.5, dist * 0.38 * (smooth + 0.45))
         step_len = np.hypot(step_x, step_y)
         if step_len > max_vel:
@@ -353,20 +395,21 @@ class Colorbot:
         if box_data is not None:
             x, y, w, h = box_data
             
-            active_bone = self.magnet_target if magnet_is_active else self.aim_target
-            cX, target_y = self._calculate_target_point(x, y, w, h, gz_center, active_bone)
+            active_bone_req = self.magnet_target if magnet_is_active else self.aim_target
+            cX, target_y, bones_dict, active_bone_name = self._calculate_target_point(x, y, w, h, gz_center, active_bone_req)
             
             x_diff = cX - gz_center
             y_diff = target_y - gz_center
 
             # Dynamic Recoil Compensation (RCS) during active spray:
-            # When gun is actively spraying bullets, pull target slightly downward to counter weapon climb
-            if self.is_burst_spraying:
-                spray_elapsed = now - self.burst_spray_start_time
-                bullet_num = int(spray_elapsed / max(0.05, self.burst_delay)) + 1
-                if bullet_num >= 2:
-                    recoil_pull = min(4, int(bullet_num * 1.2))
-                    y_diff += recoil_pull
+            if self.rcs_enabled and self.is_burst_spraying:
+                spray_elapsed_ms = (now - self.burst_spray_start_time) * 1000.0
+                if spray_elapsed_ms >= self.rcs_start_delay_ms:
+                    bullet_num = int((spray_elapsed_ms - self.rcs_start_delay_ms) / 100.0) + 1
+                    recoil_pull = min(self.rcs_pitch * 1.8, self.rcs_pitch * (1.0 + 0.15 * min(bullet_num, 8)))
+                    yaw_pull = self.rcs_yaw * (0.5 if bullet_num % 2 == 0 else -0.5)
+                    y_diff += int(round(recoil_pull))
+                    x_diff += int(round(yaw_pull))
 
             dist = np.hypot(x_diff, y_diff)
 
@@ -377,7 +420,8 @@ class Colorbot:
                 "target_y": target_y,
                 "x_diff": x_diff, "y_diff": y_diff,
                 "dist": round(dist, 1),
-                "bone": active_bone
+                "bone": active_bone_name,
+                "bones": bones_dict
             }
 
             # 2. Check Aim Control

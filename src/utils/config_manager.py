@@ -27,10 +27,19 @@ DEFAULT_CONFIG = {
     "SENSITIVITY": 0.35,
     "SMOOTHING": 0.18,
     "HEAD_OFFSET": 7,
+    "ANTI_SHAKE_ENABLED": True,
+    "DEADZONE": 1.0,
+    "RCS_ENABLED": True,
+    "RCS_PITCH": 2.5,
+    "RCS_YAW": 0.0,
+    "RCS_START_DELAY_MS": 100,
+    "KMNET_IP": "192.168.2.188",
+    "KMNET_PORT": 16896,
+    "KMNET_UUID": "46405c53",
     "CAPTURE_METHOD": "Auto",
     "MOUSE_METHOD": "Auto",
     "PREVIEW_MODE": "Camera + HUD",
-    "PREVIEW_SIZE": "360x360"
+    "PREVIEW_SIZE": "500x500"
 }
 
 class ConfigManager:
