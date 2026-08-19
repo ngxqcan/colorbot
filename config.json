@@ -1,11 +1,17 @@
 {
     "TOGGLE_KEY": "f1",
+    "AIM_MODE": "Hold",
     "TRIGGER_KEY": "f2",
     "TRIGGER_DELAY": 25,
-    "FOV": 50,
+    "FOV": 60,
     "RESOLUTION": [
         "1920",
         "1080"
     ],
-    "ENEMY_COLOR": "Purple"
+    "ENEMY_COLOR": "Purple",
+    "SENSITIVITY": 0.35,
+    "SMOOTHING": 0.3,
+    "HEAD_OFFSET": 8,
+    "CAPTURE_METHOD": "Auto",
+    "MOUSE_METHOD": "Auto"
 }

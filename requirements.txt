@@ -1,8 +1,7 @@
 keyboard
 customtkinter
-makcu
 opencv-python
 numpy
 Pillow
-cyndilib
-cmake
+mss
+dxcam; sys_platform == 'win32'

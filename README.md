@@ -1,97 +1,80 @@
-# 2PC Valorant Colorbot
+# Valorant Colorbot (1-PC & 2-PC Optimized)
 
-A fully external 2-computer colorbot for Valorant, using NDI to transfer video frames between computers and a MAKCU device to spoof mouse movement and clicks. Because the frames are only ever analysed on the second computer, it can be very difficult for anticheats to detect. (I used this script for multiple months on my main account and have not received a ban)
+A high-performance colorbot for Valorant optimized for **1-PC standalone setups** (ultra-low latency screen capture and direct mouse control), while still retaining full compatibility with **2-PC setups** (NDI stream + MAKCU hardware controller).
 
-https://github.com/user-attachments/assets/ac019950-a0ac-433c-b8cd-d820d9b15f62
+---
 
-## Features
+## ⚡ Key 1-PC Optimizations
 
-- **Triggerbot**: Shoots when the crosshair is over an enemy
-- **Aimbot**: Moves the mouse to the enemy's head
-- **Humanised Aim**: Adds randomness to the mouse movement to make it look more human
-- **Menu UI**: CustomTkinter UI for easy configuration on the second PC
-- **NDI Source Finder**: Automatically finds NDI sources
-- **MAKCU Support**: Supports Makcu device for emulating mouse movement and clicks
+- **Direct Screen Capture (DXCam / MSS / Win32 GDI)**:
+  - Captures only the FOV region of interest (ROI) around the crosshair instead of the full screen.
+  - Sub-millisecond latency (<0.5ms) and 144Hz–240Hz+ capture rate via DirectX Desktop Duplication API (DXCam).
+  - No need for OBS, NDI streams, or second computers!
+- **Direct 1-PC Mouse Emulation**:
+  - Native Windows Input API via `ctypes` (`mouse_event` / `SendInput`).
+  - Seamless automatic fallback to Makcu if a hardware USB device is connected.
+- **In-Game Sensitivity Scaling**:
+  - Accurate pixel-to-angle conversion:
+    $$ \text{Movement Multiplier} = 1.07437623 \times \text{Sensitivity}^{-0.9936827126} $$
+- **Humanized Smoothing & Head Offset**:
+  - Adjustable smoothing factor for natural cursor tracking.
+  - Configurable Head Y-Offset to lock onto head level rather than center of mass.
+- **Hold & Toggle Aim Modes**:
+  - Support for Hold mode (active only while key is held down) and Toggle mode.
 
-## Installation
+---
 
-#### Prerequisites
+## 🛠️ Installation & Setup (1-PC)
 
-- **Main Computer**: Capable of running both **Valorant** and **OBS** simultaneously.
-- **Second Computer**: Any python-capable device able to run the script. (e.g. Raspberry Pi, Laptop, Second PC)
-- **MAKCU Device**: Required for emulating mouse movement and clicks. You can also use other mouse input devices but no support is provided.
-- **Ethernet Connection**: A wired Ethernet connection between the main PC and the second PC for low latency, Wifi is not recommended.
+### 1. Requirements:
+- Windows 10 / 11
+- Python 3.10+
 
-On your main (gaming) computer:
+### 2. Setup Virtual Environment:
+```bash
+git clone https://github.com/Violevo/2PC-Valorant-Colorbot
+cd 2PC-Valorant-Colorbot
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+```
 
-- **OBS-NDI Plugin**:
-  Install the [OBS-NDI](https://github.com/DistroAV/DistroAV) plugin for OBS on your main computer.
+### 3. Install Dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-On your secondary computer:
+### 4. Run the Application:
+```bash
+python main.py
+```
 
-1. **Install Python**:
-   - Python 3.10 or higher from [python.org](https://www.python.org/downloads/)
+---
 
-2. **Install NDI SDK & Python-NDI**:
-   - [NDI SDK](https://ndi.video/for-developers/ndi-sdk/) version for your specific operating system.
-   - The [Python-NDI](https://github.com/buresu/ndi-python) library.
+## ⚙️ Configuration Guide
 
-3. **Clone the repository:**
+### Aimbot Settings:
+- **Aimbot Active**: Enable / Disable aimbot.
+- **Key**: Keybind to trigger/toggle aimbot (e.g. `f1`, `alt`, `shift`, `c`).
+- **Aim Mode**: `Hold` (active while held down) or `Toggle`.
+- **Enemy Color**: `Purple` (default enemy highlight), `Yellow` (Deuteranopia), or `Red`.
+- **FOV**: Bounding box size centered on crosshair (40–100 px recommended).
+- **Game Sensitivity**: Match your exact in-game Valorant sensitivity (e.g. `0.35`).
+- **Smoothing Speed**: Factor from 0.05 (slow/smooth) to 1.0 (instant snap).
+- **Head Y Offset**: Pixels above torso center to target head level (default `8`–`12`).
 
-   ```bash
-   git clone https://github.com/Violevo/2PC-Valorant-Colorbot
-   cd 2PC-Valorant-Colorbot
-   ```
+### Triggerbot Settings:
+- **Triggerbot Active**: Enable / Disable triggerbot.
+- **Key**: Keybind to toggle triggerbot (`f2`).
+- **Shot Delay**: Delay in milliseconds before firing (default `25ms`).
 
-4. **Set up a Virtual Environment:**
+### Driver Settings (Misc tab):
+- **Capture Driver**: `Auto` (detects fastest DXCam/MSS), `DXCam`, `MSS`, `GDI`, `NDI`.
+- **Mouse Driver**: `Auto`, `Win32` (1-PC Direct API), `Makcu` (Hardware device).
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
+---
 
-5. **Install Dependencies:**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-6. **Run the Script:**
-   ```bash
-   python main.py
-   ```
-
-## Overview & Project Structure
-
-The program works as follows:
-
-1. **OBS Captures the Valorant Game Window**:
-   - OBS is captures the Valorant.exe window as a video stream
-2. **The Video Stream Is Sent Over Your Local Network Using OBS-NDI**:
-   - OBS streams the captured video to a second computer via the **OBS-NDI** plugin.
-3. **The Second Computer Receives This Video Stream Using Python-NDI**:
-   - Python-NDI receives the video stream and processes it.
-4. **The Program Generates a Similarity Map**:
-   - The program compares the pixels of each frame against a colour range of enemy outlines to create a similarity map. In short, this is an image of where the enemy's are in game.
-5. **Triggerbot**:
-   - If the crosshair has pixels from the similarity map both above and below it (+/- a few horizontal pixels), indicating it's over a player, the program triggers a click function to shoot.
-
-6. **Aimbot Functionality**:
-   - For the aimbot, the topmost pixel in the similarity map is subtracted from the crosshair’s position to create a vector (in pixels) pointing to the player’s head.
-   - The amount the mouse should move for each pixel is calculated from the following formula:
-
-     $$ 1.07437623 \times \text{Sensitivity}^{-0.9936827126} $$
-
-7. **Triggerbot / Aimbot Data Is Transmitted Over USB**:
-   - The processed data (mouse movement and triggerbot signal) is sent over USB to a **Makcu Device**.
-
-   - The Makcu Device decodes the data and combines it with legitimate mouse movement data from the mouses sensor to create a spoofed mouse movement signal.
-
-   - The spoofed mouse movement signal is then sent to the main computer.
-
-### Project Structure
-
-The project is structured as follows:
+## 📁 Project Structure
 
 ```text
 ├── main.py             # Entry point (root)
@@ -101,38 +84,17 @@ The project is structured as follows:
 └── src/
     ├── main.py         # Main execution logic
     ├── core/
-    │   └── colorbot.py # Detection & processing
+    │   └── colorbot.py # Detection, math scaling, & aimbot loop
     ├── drivers/
-    │   ├── mouse.py    # Pico/Makcu driver
-    │   └── screen.py   # NDI capture driver
+    │   ├── mouse.py    # 1-PC Win32 API & Makcu hardware driver
+    │   └── screen.py   # DXCam, MSS, GDI & NDI multi-driver capture
     ├── ui/
-    │   └── app.py      # CustomTkinter UI
+    │   └── app.py      # CustomTkinter UI with full 1-PC controls
     └── utils/
-        └── config_manager.py
+        └── config_manager.py # JSON configuration manager
 ```
 
-## Contributing & Licensing
+---
 
-Contributions are always welcome. If you'd like to contribute to this project, please fork the repository, create a feature branch, and submit a pull request. Here is a list of additional features that could be implemented:
-
-- Redevelop in C++ for improved performance
-- Add humanised aim (Bezier curves) + Smoothing + Randomness
-- Extend feature list (Recoil, Instalock, etc)
-
-### Credits
-
-A list of recources that helped me develop this project
-
-- [pwnhub](https://www.unknowncheats.me/forum/valorant/587689-fast-hue-l2-distance-based-color-filtering-using-numpy.html) - Good post on python color filtering.
-- [Ssarkos](https://www.unknowncheats.me/forum/valorant/499748-pixel-silent-aim.html) - Where i found the sensitivity calculation.
-
-### License
-
-This project is licensed under the GNU GPLv3 License - see the [LICENSE](LICENSE) file for more details.
-
-## Gallery
-
-![Preview](./images/preview1.png)
-![Preview](./images/preview2.png)
-
-I am not responsible for any bans you may receive from using this project. Please use it at your own risk.
+## 📜 License
+This project is licensed under the GNU GPLv3 License.
