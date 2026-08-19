@@ -27,6 +27,7 @@ class PicoMouse:
         self.logitech_driver = None
         self.active_driver = "win32"
         self.is_windows = sys.platform == "win32"
+        self.is_left_down = False
 
         self._init_driver()
 
@@ -99,45 +100,86 @@ class PicoMouse:
             except Exception as e:
                 print(f"[Error] Win32 mouse_event failed: {e}")
 
-    def click(self, button="left", delay=0.01):
-        """Simulates a mouse click with a realistic press-release duration."""
+    def mouse_down(self, button="left"):
+        """Holds down a mouse button (for burst spray and continuous fire)."""
+        if button == "left":
+            self.is_left_down = True
+
         # Makcu hardware
         if self.active_driver == "makcu" and self.makcu_controller:
             try:
                 from makcu import MouseButton
                 btn = MouseButton.LEFT if button == "left" else MouseButton.RIGHT
-                self.makcu_controller.click(btn)
+                self.makcu_controller.press(btn)
                 return
             except Exception as e:
-                print(f"[Error] Makcu click failed ({e}); switching to fallback.")
+                print(f"[Error] Makcu press failed ({e}); switching to fallback.")
                 self.active_driver = "win32"
 
         # Logitech G HUB driver
         if self.active_driver == "logitech" and self.logitech_driver:
-            if self.logitech_driver.click(button, delay):
+            if self.logitech_driver.mouse_down(button):
                 return
             else:
-                print("[Error] Logitech click failed; switching to win32 fallback.")
                 self.active_driver = "win32"
 
         # Win32 user32.mouse_event
         if self.active_driver == "win32" and self.is_windows:
             try:
-                if button == "left":
-                    ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                    if delay > 0:
-                        time.sleep(delay)
-                    ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-                elif button == "right":
-                    ctypes.windll.user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-                    if delay > 0:
-                        time.sleep(delay)
-                    ctypes.windll.user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+                flag = MOUSEEVENTF_LEFTDOWN if button == "left" else MOUSEEVENTF_RIGHTDOWN
+                ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0)
             except Exception as e:
-                print(f"[Error] Win32 click failed: {e}")
+                print(f"[Error] Win32 mouse_down failed: {e}")
+
+    def mouse_up(self, button="left"):
+        """Releases a held mouse button."""
+        if button == "left":
+            self.is_left_down = False
+
+        # Makcu hardware
+        if self.active_driver == "makcu" and self.makcu_controller:
+            try:
+                from makcu import MouseButton
+                btn = MouseButton.LEFT if button == "left" else MouseButton.RIGHT
+                self.makcu_controller.release(btn)
+                return
+            except Exception as e:
+                print(f"[Error] Makcu release failed ({e}); switching to fallback.")
+                self.active_driver = "win32"
+
+        # Logitech G HUB driver
+        if self.active_driver == "logitech" and self.logitech_driver:
+            if self.logitech_driver.mouse_up(button):
+                return
+            else:
+                self.active_driver = "win32"
+
+        # Win32 user32.mouse_event
+        if self.active_driver == "win32" and self.is_windows:
+            try:
+                flag = MOUSEEVENTF_LEFTUP if button == "left" else MOUSEEVENTF_RIGHTUP
+                ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0)
+            except Exception as e:
+                print(f"[Error] Win32 mouse_up failed: {e}")
+
+    def press(self, button="left"):
+        self.mouse_down(button)
+
+    def release(self, button="left"):
+        self.mouse_up(button)
+
+    def click(self, button="left", delay=0.015):
+        """Simulates a mouse click with a realistic press-release duration."""
+        self.mouse_down(button)
+        if delay > 0:
+            time.sleep(delay)
+        self.mouse_up(button)
 
     def close(self):
-        """Releases and cleans up driver resources."""
+        """Releases any held buttons and cleans up driver resources."""
+        if self.is_left_down:
+            self.mouse_up("left")
+
         if self.makcu_controller:
             try:
                 self.makcu_controller.disconnect()
@@ -154,4 +196,3 @@ class PicoMouse:
 
     def __del__(self):
         self.close()
-

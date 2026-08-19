@@ -9,7 +9,11 @@ from drivers.mouse import PicoMouse
 class Colorbot:
     """
     High-Precision Color Detection, Target Tracking & Magnet Engine for Valorant.
-    Includes Silhouette Merging, Center-of-Head targeting, and Anti-Jitter dampening.
+    Includes:
+    - Multi-Enemy Sticky Target Locking (Eliminates target flickering/confusion).
+    - True Spray-Hold Burst Mode (Holds down mouse button for N-shot spray).
+    - Silhouette Merging & Center-of-Skull Head Targeting.
+    - Anti-Jitter EMA Coordinate Dampening.
     """
     COLOR_RANGES = {
         "Purple": {
@@ -31,9 +35,9 @@ class Colorbot:
     def __init__(self, x, y, grabzone, color_name="Purple",
                  aim_enabled=False, trigger_enabled=False, magnet_enabled=False,
                  aim_mode="Hold", trigger_mode="Toggle", aim_target="Head",
-                 magnet_mode="Tap", burst_count=2, burst_delay=80, burst_cooldown=250, tap_cooldown=180,
+                 magnet_mode="Burst", burst_count=2, burst_delay=95, burst_cooldown=240, tap_cooldown=180,
                  magnet_target="Head", magnet_fov=45, magnet_smoothing=0.20,
-                 sensitivity=0.35, smoothing=0.18, head_offset=7, trigger_delay=25,
+                 sensitivity=0.35, smoothing=0.18, head_offset=7, trigger_delay=20,
                  capture_method="auto", mouse_method="auto"):
         self.x = int(x)
         self.y = int(y)
@@ -55,11 +59,11 @@ class Colorbot:
         self.trigger_delay = max(0, int(trigger_delay)) / 1000.0  # seconds
         
         # Dedicated Magnet parameters
-        self.magnet_mode = magnet_mode  # "Tap", "Burst", "Continuous"
+        self.magnet_mode = magnet_mode  # "Burst", "Tap", "Continuous"
         self.burst_count = max(1, int(burst_count))
-        self.burst_delay = max(10, int(burst_delay)) / 1000.0  # seconds
-        self.burst_cooldown = max(50, int(burst_cooldown)) / 1000.0  # seconds
-        self.tap_cooldown = max(50, int(tap_cooldown)) / 1000.0  # seconds
+        self.burst_delay = max(10, int(burst_delay)) / 1000.0  # seconds per bullet in burst
+        self.burst_cooldown = max(50, int(burst_cooldown)) / 1000.0  # recovery between bursts
+        self.tap_cooldown = max(50, int(tap_cooldown)) / 1000.0  # recovery between taps
         self.magnet_target = magnet_target
         self.magnet_fov = max(10, (int(magnet_fov) // 2) * 2)
         self.magnet_smoothing = max(0.01, min(1.0, float(magnet_smoothing)))
@@ -72,10 +76,18 @@ class Colorbot:
         self.trigger_toggled = False
         self.magnet_toggled = False
 
-        self.last_trigger_time = 0.0
-        self.last_magnet_fire_time = 0.0
+        # Multi-Enemy Target Locking State (Sticky hysteresis)
+        self.locked_target_pos = None
+        self.locked_target_time = 0.0
 
-        # Sub-pixel accumulator to eliminate float-rounding jitter
+        # Spray / Burst Execution States
+        self.is_burst_spraying = False
+        self.burst_spray_end_time = 0.0
+        self.last_burst_end_time = 0.0
+        self.last_trigger_time = 0.0
+        self.last_tap_time = 0.0
+
+        # Sub-pixel accumulator
         self.acc_x = 0.0
         self.acc_y = 0.0
         self.last_processed_frame_id = -1
@@ -131,6 +143,9 @@ class Colorbot:
     def stop(self):
         """Stops the loop."""
         self.running = False
+        if self.is_burst_spraying:
+            self.mouse.mouse_up("left")
+            self.is_burst_spraying = False
         if self.thread:
             self.thread.join(timeout=1.0)
             self.thread = None
@@ -143,14 +158,15 @@ class Colorbot:
 
     def _find_unified_targets(self, mask, gz_center):
         """
-        Connects fragmented enemy outline pixels into full unified character bounding boxes.
-        Finds true horizontal and vertical centers instead of outline edges.
+        Connects fragmented enemy outline pixels into unified character bounding boxes.
+        Includes Multi-Enemy Target Stickiness to prevent target flickering/confusion.
         """
         closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.close_kernel)
         dilated = cv2.dilate(closed, None, iterations=2)
         
         contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
+            self.locked_target_pos = None
             return None, dilated
 
         boxes = []
@@ -161,13 +177,16 @@ class Colorbot:
                     boxes.append([bx, by, bx + bw, by + bh])
 
         if not boxes:
+            self.locked_target_pos = None
             return None, dilated
 
+        # Cluster/merge overlapping boxes belonging to the same player body
         merged_boxes = []
         for box in sorted(boxes, key=lambda b: (b[0], b[1])):
             x1, y1, x2, y2 = box
             merged = False
             for m in merged_boxes:
+                # Merge if overlapping or in immediate proximity (same player)
                 if not (x2 + 8 < m[0] or x1 - 8 > m[2] or y2 + 8 < m[1] or y1 - 8 > m[3]):
                     m[0] = min(m[0], x1)
                     m[1] = min(m[1], y1)
@@ -178,16 +197,33 @@ class Colorbot:
             if not merged:
                 merged_boxes.append([x1, y1, x2, y2])
 
-        def box_dist(b):
-            cx = (b[0] + b[2]) // 2
-            cy = (b[1] + b[3]) // 2
-            return (cx - gz_center) ** 2 + (cy - gz_center) ** 2
+        # Multi-Enemy Target Stickiness:
+        # If we are already tracking a target, give it a hysteresis bonus so we don't jump between enemies!
+        now = time.time()
+        has_active_lock = (self.locked_target_pos is not None and (now - self.locked_target_time) < 0.25)
+        
+        def target_score(b):
+            bcx = (b[0] + b[2]) // 2
+            bcy = (b[1] + b[3]) // 2
+            raw_dist = np.hypot(bcx - gz_center, bcy - gz_center)
+            
+            if has_active_lock:
+                dist_to_prev_lock = np.hypot(bcx - self.locked_target_pos[0], bcy - self.locked_target_pos[1])
+                # If this box is the player we were already tracking (within 35px of last position)
+                if dist_to_prev_lock < 35:
+                    return raw_dist - 28.0  # Massive priority bonus to stay locked on current target!
+                    
+            return raw_dist
 
-        best = min(merged_boxes, key=box_dist)
+        best = min(merged_boxes, key=target_score)
         x = best[0]
         y = best[1]
         w = max(4, best[2] - best[0])
         h = max(6, best[3] - best[1])
+
+        # Update lock position
+        self.locked_target_pos = (x + w // 2, y + h // 2)
+        self.locked_target_time = now
 
         return (x, y, w, h), dilated
 
@@ -213,6 +249,7 @@ class Colorbot:
             head_offset_clamped = min(self.head_offset, max(3, int(h * 0.18)))
             raw_target_y = y + head_offset_clamped
 
+        # Target coordinate stabilization filter (prevents detection micro-jitter)
         if self.last_filtered_target is not None:
             prev_x, prev_y = self.last_filtered_target
             delta_dist = np.hypot(raw_cX - prev_x, raw_target_y - prev_y)
@@ -232,25 +269,18 @@ class Colorbot:
         self.last_filtered_target = (cX, target_y)
         return cX, target_y
 
-    def _execute_magnet_fire(self):
-        """Handles Tap vs Burst vs Continuous firing logic in Magnet mode."""
-        mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
-        
-        if "burst" in mode_str:
-            shots = max(1, self.burst_count)
-            for _ in range(shots):
-                self.mouse.click("left", delay=0.015)
-                time.sleep(self.burst_delay)
-            time.sleep(self.burst_cooldown)
-        elif "continuous" in mode_str or "spray" in mode_str:
-            self.mouse.click("left", delay=0.02)
-        else: # "tap" mode
-            self.mouse.click("left", delay=0.015)
-            time.sleep(self.tap_cooldown)
-
     def process(self):
         t_start = time.perf_counter()
+        now = time.time()
         
+        # 1. Manage Active Spray / Burst Duration (Hold Mouse Down)
+        if self.is_burst_spraying:
+            if now >= self.burst_spray_end_time:
+                self.mouse.mouse_up("left")
+                self.is_burst_spraying = False
+                self.last_burst_end_time = now
+
+        # Screen capture
         screen, frame_id = self.grabber.get_screen_with_id()
         if screen is None or screen.size == 0:
             return
@@ -266,13 +296,23 @@ class Colorbot:
         aiming_this_tick = False
         triggering_this_tick = False
 
+        # Unified character detection with Multi-Enemy Target Locking
         box_data, dilated_mask = self._find_unified_targets(mask, gz_center)
+
+        # Check Active Trigger/Aim/Magnet states
+        magnet_is_active = self.magnet_enabled and self.is_magnet_key_pressed
+        
+        # Reset lock when keys are released
+        if not (self.is_aim_key_pressed or self.is_magnet_key_pressed or self.is_trigger_key_pressed):
+            self.locked_target_pos = None
+            if self.is_burst_spraying:
+                self.mouse.mouse_up("left")
+                self.is_burst_spraying = False
 
         if box_data is not None:
             x, y, w, h = box_data
             
-            # Determine active bone based on whether Magnet or standard Aimbot is in control
-            active_bone = self.magnet_target if self.magnet_enabled and self.is_magnet_key_pressed else self.aim_target
+            active_bone = self.magnet_target if magnet_is_active else self.aim_target
             cX, target_y = self._calculate_target_point(x, y, w, h, gz_center, active_bone)
             
             x_diff = cX - gz_center
@@ -289,10 +329,7 @@ class Colorbot:
                 "bone": active_bone
             }
 
-            # 1. Check Magnet Mode Active State
-            magnet_is_active = self.magnet_enabled and self.is_magnet_key_pressed
-
-            # 2. Check Standard Aimbot Active State
+            # 2. Check Aim Control
             should_aim = False
             aim_smooth_val = self.smoothing
             if magnet_is_active:
@@ -306,7 +343,7 @@ class Colorbot:
                 elif self.aim_mode == "Always":
                     should_aim = True
 
-            # 3. Check Triggerbot Active State
+            # 3. Check Standard Triggerbot Control
             should_trigger = False
             if self.trigger_enabled:
                 if self.trigger_mode == "Hold":
@@ -316,7 +353,7 @@ class Colorbot:
                 elif self.trigger_mode == "Always":
                     should_trigger = True
 
-            # Aimbot Mouse Movement (Anti-Jitter Smooth Humanized Interpolation)
+            # Aimbot Mouse Movement (Zero-Jitter Smooth Humanized Movement)
             if should_aim and is_new_frame:
                 if dist >= 1.2:
                     sens_scale = 1.07437623 * (self.sensitivity ** -0.9936827126)
@@ -350,36 +387,60 @@ class Colorbot:
                         self.mouse.move(dx, dy)
                         aiming_this_tick = True
 
-            # Magnet Auto-Fire Execution
-            if magnet_is_active:
-                hitbox_w = max(4, w // 2)
-                hitbox_h = max(5, int(h * 0.35))
-                if abs(cX - gz_center) <= hitbox_w and abs(target_y - gz_center) <= hitbox_h:
-                    now = time.time()
-                    mode_str = self.magnet_mode.lower() if self.magnet_mode else "tap"
-                    min_cooldown = self.burst_cooldown if "burst" in mode_str else self.tap_cooldown
-                    
-                    if now - self.last_magnet_fire_time >= (self.trigger_delay + min_cooldown):
-                        if self.trigger_delay > 0:
-                            time.sleep(self.trigger_delay)
-                        self._execute_magnet_fire()
-                        self.last_magnet_fire_time = time.time()
-                        triggering_this_tick = True
+            # 4. Magnet Firing Execution (Burst = Hold Spray, Tap = Single Shot)
+            hitbox_w = max(4, w // 2)
+            hitbox_h = max(5, int(h * 0.35))
+            is_on_target = (abs(cX - gz_center) <= hitbox_w and abs(target_y - gz_center) <= hitbox_h)
 
-            # Standard Triggerbot Execution
-            elif should_trigger:
-                hitbox_w = max(4, w // 2)
-                hitbox_h = max(5, int(h * 0.35))
-                if abs(cX - gz_center) <= hitbox_w and abs(target_y - gz_center) <= hitbox_h:
-                    now = time.time()
-                    if now - self.last_trigger_time >= (self.trigger_delay + 0.12):
-                        if self.trigger_delay > 0:
-                            time.sleep(self.trigger_delay)
-                        self.mouse.click("left")
-                        self.last_trigger_time = time.time()
-                        triggering_this_tick = True
+            if magnet_is_active:
+                mode_str = self.magnet_mode.lower() if self.magnet_mode else "burst"
+                
+                if "burst" in mode_str:
+                    # Burst Mode = Hold Left Click down for the duration of N bullets!
+                    if is_on_target and not self.is_burst_spraying:
+                        if now - self.last_burst_end_time >= (self.trigger_delay + self.burst_cooldown):
+                            if self.trigger_delay > 0:
+                                time.sleep(self.trigger_delay)
+                            
+                            # Calculate hold duration for N bullets (e.g. 2 bullets @ 95ms = 190ms hold)
+                            spray_duration = max(0.06, self.burst_count * self.burst_delay)
+                            self.mouse.mouse_down("left")
+                            self.is_burst_spraying = True
+                            self.burst_spray_end_time = time.time() + spray_duration
+                            triggering_this_tick = True
+                
+                elif "continuous" in mode_str or "spray" in mode_str:
+                    # Continuous Spray = Hold left click as long as on target
+                    if is_on_target and not self.is_burst_spraying:
+                        self.mouse.mouse_down("left")
+                        self.is_burst_spraying = True
+                    elif not is_on_target and self.is_burst_spraying:
+                        self.mouse.mouse_up("left")
+                        self.is_burst_spraying = False
+                    triggering_this_tick = self.is_burst_spraying
+
+                else: # "tap" mode
+                    if is_on_target:
+                        if now - self.last_tap_time >= (self.trigger_delay + self.tap_cooldown):
+                            if self.trigger_delay > 0:
+                                time.sleep(self.trigger_delay)
+                            self.mouse.click("left", delay=0.015)
+                            self.last_tap_time = time.time()
+                            triggering_this_tick = True
+
+            # 5. Standard Triggerbot Execution
+            elif should_trigger and is_on_target:
+                if now - self.last_trigger_time >= (self.trigger_delay + 0.12):
+                    if self.trigger_delay > 0:
+                        time.sleep(self.trigger_delay)
+                    self.mouse.click("left")
+                    self.last_trigger_time = time.time()
+                    triggering_this_tick = True
         else:
             self.last_filtered_target = None
+            if self.is_burst_spraying and "continuous" in self.magnet_mode.lower():
+                self.mouse.mouse_up("left")
+                self.is_burst_spraying = False
 
         t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
         
@@ -388,7 +449,7 @@ class Colorbot:
             self.last_mask = dilated_mask if dilated_mask is not None else mask
             self.last_target = target_info
             self.is_aiming_now = aiming_this_tick
-            self.is_triggering_now = triggering_this_tick
+            self.is_triggering_now = triggering_this_tick or self.is_burst_spraying
             self.latency_ms = 0.85 * self.latency_ms + 0.15 * t_elapsed_ms if self.latency_ms > 0 else t_elapsed_ms
 
         self._update_fps()
