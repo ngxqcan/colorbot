@@ -1,10 +1,10 @@
 import queue
 import time
-import keyboard
 import customtkinter
 from threading import Thread
 from core.colorbot import Colorbot
 from utils.config_manager import ConfigManager
+from utils.input_handler import is_key_pressed, record_key_or_mouse
 
 customtkinter.set_appearance_mode("Dark")
 customtkinter.set_default_color_theme("blue")
@@ -17,11 +17,11 @@ class App(customtkinter.CTk):
         self._init_variables()
         self._setup_ui()
         
-        # Start background keyboard listener thread
+        # Start background keyboard/mouse listener thread
         Thread(target=self.listen_for_keys, daemon=True).start()
 
     def _init_variables(self):
-        self.aim_key = self.config_manager.get('TOGGLE_KEY', 'f1')
+        self.aim_key = self.config_manager.get('TOGGLE_KEY', 'RMB')
         self.aim_mode = self.config_manager.get('AIM_MODE', 'Hold')
         self.trigger_key = self.config_manager.get('TRIGGER_KEY', 'f2')
         self.trigger_delay = float(self.config_manager.get('TRIGGER_DELAY', 25))
@@ -37,12 +37,12 @@ class App(customtkinter.CTk):
         self.enabled_aim = False 
         self.enabled_trigger = False 
         self.formatted_resolution = f"{self.resolution[0]}x{self.resolution[1]}"
-        self.current_key_target = None 
+        self.is_recording_key = False
         self.colorbot = None
 
     def _setup_ui(self):
         self.resizable(False, False)
-        self.title("Valorant 1PC Colorbot - Optimized")
+        self.title("Valorant Colorbot - 1PC & Keybinds")
         try:
             self.iconbitmap("icon.ico")
         except Exception:
@@ -113,7 +113,7 @@ class App(customtkinter.CTk):
         self.show_frame(self.aimbot_frame)
 
     def _setup_aimbot_page(self):
-        # Row 0: Switch, Key, Mode, Color
+        # Row 0: Switch, Key Button (records key/mouse), Aim Mode, Color
         self.switch_aim = customtkinter.CTkSwitch(
             self.aimbot_frame, text="Aimbot Active", 
             font=customtkinter.CTkFont(size=14, weight="bold"), 
@@ -124,7 +124,7 @@ class App(customtkinter.CTk):
         self.button_aim_key = customtkinter.CTkButton(
             self.aimbot_frame, text=f"Key: {self.aim_key}", 
             command=lambda: self.change_key_text("aim"), 
-            width=100, font=customtkinter.CTkFont(size=13)
+            width=120, font=customtkinter.CTkFont(size=13)
         )
         self.button_aim_key.grid(row=0, column=1, padx=5, pady=10)
 
@@ -177,7 +177,7 @@ class App(customtkinter.CTk):
         self.label_head_value.grid(row=4, column=3, padx=5, pady=6)
 
     def _setup_triggerbot_page(self):
-        # Row 0: Switch, Key, Color
+        # Row 0: Switch, Key Button, Color
         self.switch_trigger = customtkinter.CTkSwitch(
             self.triggerbot_frame, text="Triggerbot Active", 
             font=customtkinter.CTkFont(size=14, weight="bold"), 
@@ -188,7 +188,7 @@ class App(customtkinter.CTk):
         self.button_trigger_key = customtkinter.CTkButton(
             self.triggerbot_frame, text=f"Key: {self.trigger_key}", 
             command=lambda: self.change_key_text("trigger"), 
-            width=110, font=customtkinter.CTkFont(size=13)
+            width=120, font=customtkinter.CTkFont(size=13)
         )
         self.button_trigger_key.grid(row=0, column=1, padx=5, pady=15)
 
@@ -294,51 +294,65 @@ class App(customtkinter.CTk):
         frame.tkraise()
 
     def listen_for_keys(self):
-        """Keyboard listener handling both Hold and Toggle modes."""
+        """Keyboard/Mouse listener handling both Hold and Toggle modes."""
         aim_was_pressed = False
         trigger_was_pressed = False
 
         while True:
-            try:
-                # 1. Aim Key Handling
-                aim_is_pressed = keyboard.is_pressed(self.aim_key)
-                if self.aim_mode == "Hold":
-                    if aim_is_pressed and not self.enabled_aim:
-                        self.enabled_aim = True
-                        self.switch_aim.select()
-                        self._update_colorbot()
-                    elif not aim_is_pressed and self.enabled_aim:
-                        self.enabled_aim = False
-                        self.switch_aim.deselect()
-                        self._update_colorbot()
-                else: # Toggle Mode
-                    if aim_is_pressed and not aim_was_pressed:
-                        self.switch_aim.toggle()
-                        self.toggle_aim()
-                    aim_was_pressed = aim_is_pressed
+            if not self.is_recording_key:
+                try:
+                    # 1. Aim Key Handling
+                    aim_is_pressed = is_key_pressed(self.aim_key)
+                    if self.aim_mode == "Hold":
+                        if aim_is_pressed and not self.enabled_aim:
+                            self.enabled_aim = True
+                            self.switch_aim.select()
+                            self._update_colorbot()
+                        elif not aim_is_pressed and self.enabled_aim:
+                            self.enabled_aim = False
+                            self.switch_aim.deselect()
+                            self._update_colorbot()
+                    else: # Toggle Mode
+                        if aim_is_pressed and not aim_was_pressed:
+                            self.switch_aim.toggle()
+                            self.toggle_aim()
+                        aim_was_pressed = aim_is_pressed
 
-                # 2. Trigger Key Handling (Toggle)
-                trigger_is_pressed = keyboard.is_pressed(self.trigger_key)
-                if trigger_is_pressed and not trigger_was_pressed:
-                    self.switch_trigger.toggle()
-                    self.toggle_trigger()
-                trigger_was_pressed = trigger_is_pressed
+                    # 2. Trigger Key Handling (Toggle)
+                    trigger_is_pressed = is_key_pressed(self.trigger_key)
+                    if trigger_is_pressed and not trigger_was_pressed:
+                        self.switch_trigger.toggle()
+                        self.toggle_trigger()
+                    trigger_was_pressed = trigger_is_pressed
 
-            except Exception:
-                pass
+                except Exception:
+                    pass
             time.sleep(0.01)
 
     def change_key_text(self, key_target):
-        self.current_key_target = key_target
+        """Records any pressed key or mouse button and updates the button label immediately."""
+        if self.is_recording_key:
+            return
+
+        self.is_recording_key = True
+        target_btn = self.button_aim_key if key_target == "aim" else self.button_trigger_key
+        target_btn.configure(text="[Press Any Key/Mouse...]", fg_color="#e67e22")
+
         def listener():
-            key = keyboard.read_key()
-            if self.current_key_target == "aim":
-                self.aim_key = key
-                self.button_aim_key.configure(text=f"Key: {key}")
+            recorded = record_key_or_mouse(timeout=8.0)
+            if recorded:
+                if key_target == "aim":
+                    self.aim_key = recorded
+                    self.button_aim_key.configure(text=f"Key: {recorded}", fg_color=["#3a7ebf", "#1f538d"])
+                else:
+                    self.trigger_key = recorded
+                    self.button_trigger_key.configure(text=f"Key: {recorded}", fg_color=["#3a7ebf", "#1f538d"])
+                self.save_config()
             else:
-                self.trigger_key = key
-                self.button_trigger_key.configure(text=f"Key: {key}")
-            self.current_key_target = None
+                current = self.aim_key if key_target == "aim" else self.trigger_key
+                target_btn.configure(text=f"Key: {current}", fg_color=["#3a7ebf", "#1f538d"])
+            self.is_recording_key = False
+
         Thread(target=listener, daemon=True).start()
 
     def aim_mode_callback(self, new_mode):
